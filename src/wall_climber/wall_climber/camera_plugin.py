@@ -58,10 +58,10 @@ class CameraPlugin:
     CAMERA_NODE_TYPE = 4
 
     # ArUco config
-    _ARUCO_DICT    = cv2.aruco.DICT_4X4_50
-    _MARKER_SIZE   = 0.10    # 10 cm markers (tune to match your printed markers)
-    _DETECT_EVERY  = 4       # detect every N-th step (skip frames for speed)
-    _IMAGE_EVERY   = 2       # publish compressed image every N-th step (~15 fps)
+    _ARUCO_DICT = cv2.aruco.DICT_4X4_50
+    _MARKER_SIZE = 0.10    # 10 cm markers (tune to match your printed markers)
+    _DETECT_EVERY = 4       # detect every N-th step (skip frames for speed)
+    _IMAGE_EVERY = 2       # publish compressed image every N-th step (~15 fps)
 
     def init(self, webots_node, properties):
         self.__camera = None
@@ -101,14 +101,14 @@ class CameraPlugin:
             return
 
         self.__camera.enable(self.__timestep)
-        self.__width  = self.__camera.getWidth()
+        self.__width = self.__camera.getWidth()
         self.__height = self.__camera.getHeight()
 
         # ---- camera intrinsics from FOV + resolution ----
         fov = float(properties.get('fov', '1.2'))  # horizontal FOV in rad
         fx = (self.__width / 2.0) / math.tan(fov / 2.0)
         fy = fx  # square pixels
-        cx = self.__width  / 2.0
+        cx = self.__width / 2.0
         cy = self.__height / 2.0
 
         self.__cam_matrix = np.array([
@@ -122,8 +122,8 @@ class CameraPlugin:
         self.__aruco_dict = cv2.aruco.Dictionary_get(self._ARUCO_DICT)
         self.__aruco_params = cv2.aruco.DetectorParameters_create()
         # Speed tweaks
-        self.__aruco_params.adaptiveThreshWinSizeMin  = 3
-        self.__aruco_params.adaptiveThreshWinSizeMax  = 23
+        self.__aruco_params.adaptiveThreshWinSizeMin = 3
+        self.__aruco_params.adaptiveThreshWinSizeMax = 23
         self.__aruco_params.adaptiveThreshWinSizeStep = 10
 
         # ---- publishers ----

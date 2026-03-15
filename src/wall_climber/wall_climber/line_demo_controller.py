@@ -442,7 +442,8 @@ class LineDemoController(Node):
                     return
 
             self.get_logger().warn(
-                f'Pen probe failed after retry budget (line={line_id}, gap={self._pen_gap:.4f} m). '
+                f'Pen probe failed after retry budget '
+                f'(line={line_id}, gap={self._pen_gap:.4f} m). '
                 'Stopping demo safely.'
             )
             self._publish_zero_twist()

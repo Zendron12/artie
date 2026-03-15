@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
-from webots_ros2_msgs.srv import SpawnUrdfRobot 
-from webots_ros2_msgs.msg import UrdfRobot 
+from webots_ros2_msgs.srv import SpawnUrdfRobot
+from webots_ros2_msgs.msg import UrdfRobot
 
 
 class URDFSpawnerNode(Node):
@@ -22,7 +22,9 @@ class URDFSpawnerNode(Node):
             self.get_logger().info('Waiting for /Ros2Supervisor/spawn_urdf_robot service...')
             elapsed_seconds += 1
             if elapsed_seconds >= max_wait_seconds:
-                raise RuntimeError('Timed out waiting for /Ros2Supervisor/spawn_urdf_robot service.')
+                raise RuntimeError(
+                    'Timed out waiting for /Ros2Supervisor/spawn_urdf_robot service.'
+                )
 
         urdf_content = self.get_parameter('robot_description').value
         robot_name = self.get_parameter('robot_name').value
@@ -41,7 +43,8 @@ class URDFSpawnerNode(Node):
         request.robot = robot
 
         self.get_logger().info(
-            f'Sending spawn request for "{robot_name}" at {spawn_translation} with rotation {spawn_rotation}.'
+            f'Sending spawn request for "{robot_name}" at {spawn_translation}'
+            f' with rotation {spawn_rotation}.'
         )
         self.future = self.client.call_async(request)
 

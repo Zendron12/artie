@@ -39,19 +39,19 @@ class MagneticSupervisorPlugin:
 
         # --- tunables (overridden from <plugin> children in xacro) ---
         self._target_name = str(properties.get('target_robot', 'wall_climber'))
-        self._wall_y      = float(properties.get('wall_y', '2.415'))
-        self._max_dist    = float(properties.get('activation_distance', '0.8'))
-        self._adhesion    = float(properties.get('adhesion_force', '50.0'))
-        self._mass        = float(properties.get('robot_mass', '2.3'))
-        self._gravity     = float(properties.get('gravity', '9.81'))
-        self._ag_ratio    = float(properties.get('anti_gravity_ratio', '1.05'))
+        self._wall_y = float(properties.get('wall_y', '2.415'))
+        self._max_dist = float(properties.get('activation_distance', '0.8'))
+        self._adhesion = float(properties.get('adhesion_force', '50.0'))
+        self._mass = float(properties.get('robot_mass', '2.3'))
+        self._gravity = float(properties.get('gravity', '9.81'))
+        self._ag_ratio = float(properties.get('anti_gravity_ratio', '1.05'))
 
         # --- pen trail state ---
-        self._pen_node       = None     # will hold the pen_holder Solid
-        self._pen_search_at  = 100      # first search after N steps (robot needs time to spawn)
+        self._pen_node = None     # will hold the pen_holder Solid
+        self._pen_search_at = 100      # first search after N steps (robot needs time to spawn)
         self._pen_search_interval = 50  # retry every N steps if not found
-        self._root_children  = None     # root.children MFNode
-        self._last_pos       = None     # (x, z) of last contact position
+        self._root_children = None     # root.children MFNode
+        self._last_pos = None     # (x, z) of last contact position
         self._contact_thresh = 0.008    # 8 mm — pen must be very close to draw
 
         # Single-mesh trail (IndexedFaceSet) — one node, unlimited quads
@@ -63,7 +63,7 @@ class MagneticSupervisorPlugin:
             properties.get('trail_min_spacing', '0.004')
         )
         self._trail_segment_count = 0
-        self._trail_mesh_ready  = False
+        self._trail_mesh_ready = False
         self._trail_point_field = None   # MFVec3f handle
         self._trail_index_field = None   # MFInt32 handle
 
@@ -98,7 +98,7 @@ class MagneticSupervisorPlugin:
         if not rclpy.ok():
             rclpy.init(args=None)
         self._node = rclpy.create_node('magnetic_supervisor')
-        self._log  = self._node.get_logger()
+        self._log = self._node.get_logger()
         self._robot_board_pub = self._node.create_publisher(
             Pose2D, '/wall_climber/robot_pose_board', 1
         )
@@ -386,7 +386,8 @@ class MagneticSupervisorPlugin:
             f'appearance Appearance {{ material Material {{ '
             f'diffuseColor 0 0 0 emissiveColor 0.05 0.05 0.05 }} }} '
             f'geometry IndexedFaceSet {{ '
-            f'coord Coordinate {{ point [ -100 0 -100, -99.999 0 -100, -99.999 0 -99.999, -100 0 -99.999 ] }} '
+            f'coord Coordinate {{ point [ '
+            f'-100 0 -100, -99.999 0 -100, -99.999 0 -99.999, -100 0 -99.999 ] }} '
             f'coordIndex [ 0 1 2 3 -1 ] '
             f'}} }} ] }}'
         )

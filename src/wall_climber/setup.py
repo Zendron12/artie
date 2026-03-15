@@ -32,7 +32,7 @@ setup(
     maintainer='hisham',
     maintainer_email='2144934@std.hu.edu.jo',
     description='Wall Climbing Robot Package',
-    license='TODO: License declaration',
+    license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
