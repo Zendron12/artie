@@ -91,7 +91,7 @@ class SwerveKeyboardPlugin:
         self._auto_pen_target = self._auto_pen_up_pos
         self._auto_pen_target_time = None
         self._pen_contact = False
-        self._pen_gap = float('inf')
+        self._pen_gap = float('inf')  # unknown until first /wall_climber/pen_gap message
 
         # ---- ROS 2 manual-drive publisher ----------------------------
         if not rclpy.ok():
@@ -219,7 +219,8 @@ class SwerveKeyboardPlugin:
             self._last_drive_nonzero = False
 
     def _pen_target_cb(self, msg):
-        self._auto_pen_target = float(msg.data)
+        self._pen_pos = max(-0.04, min(0.02, float(msg.data)))
+        self._auto_pen_target = self._pen_pos
         self._auto_pen_target_time = time.monotonic()
 
     def _pen_contact_cb(self, msg):

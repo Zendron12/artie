@@ -58,9 +58,9 @@ class SwerveDrivePlugin:
         self._half_length = float(properties.get('half_length', '0.08'))
         self._half_width = float(properties.get('half_width', '0.06'))
 
-        self._manual_timeout_steps = int(properties.get('manual_timeout_steps', '3'))
+        self._manual_timeout_steps = int(properties.get('manual_timeout_steps', '15'))
         self._web_timeout_steps = int(properties.get('web_timeout_steps', '10'))
-        self._auto_timeout_steps = int(properties.get('auto_timeout_steps', '3'))
+        self._auto_timeout_steps = int(properties.get('auto_timeout_steps', '15'))
 
         self._module_positions = [
             (self._half_length, self._half_width),
