@@ -8,10 +8,11 @@ from ament_index_python.packages import get_package_share_directory
 from webots_ros2_driver.webots_launcher import WebotsLauncher
 from webots_ros2_driver.webots_controller import WebotsController
 
+
 def generate_launch_description():
     package_name = 'wall_climber'
     pkg_dir = get_package_share_directory(package_name)
-    
+
     # 1. تحديد المسارات
     world_path = os.path.join(pkg_dir, "worlds", "wall_world.wbt")
     camera_xacro_path = os.path.join(pkg_dir, "urdf", "vision_camera.xacro")
@@ -40,12 +41,12 @@ def generate_launch_description():
     # ==========================================================
     #   الجزء الأول: الكاميرا (كما هي في الكود الشغال معك)
     # ==========================================================
-    
+
     # ناشر حالة الكاميرا (مع Namespace عشان نفصلها عن الروبوت الثاني)
     camera_rsp = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
-        namespace='vision_camera', # ضروري جداً للفصل
+        namespace='vision_camera',  # ضروري جداً للفصل
         parameters=[{'robot_description': camera_description}]
     )
 
@@ -58,7 +59,7 @@ def generate_launch_description():
         parameters=[
             {'robot_description': camera_description},
             {'robot_name': 'vision_camera'},
-            {'spawn_translation': '0 -3.5 0'}, # مكان الكاميرا
+            {'spawn_translation': '0 -3.5 0'},  # مكان الكاميرا
             {'spawn_rotation': '0 0 1 1.57'}
         ]
     )
@@ -81,7 +82,7 @@ def generate_launch_description():
     climber_rsp = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
-        namespace='wall_climber', # ضروري جداً للفصل
+        namespace='wall_climber',  # ضروري جداً للفصل
         parameters=[{'robot_description': climber_description}]
     )
 
@@ -95,8 +96,8 @@ def generate_launch_description():
             {'robot_description': climber_description},
             {'robot_name': 'wall_climber'},
             # الإحداثيات الدقيقة للوح
-            {'spawn_translation': '0 2.405 1.80'}, 
-            {'spawn_rotation': '1 0 0 1.57'} 
+            {'spawn_translation': '0 2.405 1.80'},
+            {'spawn_rotation': '1 0 0 1.57'}
         ]
     )
 
@@ -128,7 +129,7 @@ def generate_launch_description():
     return LaunchDescription([
         webots,
         webots._supervisor,
-        
+
         # 1. تشغيل الـ State Publishers للروبوتين
         camera_rsp,
         climber_rsp,
@@ -209,7 +210,8 @@ def generate_launch_description():
             ]
         ),
 
-        # 9. Two-line board-aware demo controller (/wall_climber/cmd_vel_auto + /wall_climber/pen_target)
+        # 9. Two-line board-aware demo controller
+        #    (/wall_climber/cmd_vel_auto + /wall_climber/pen_target)
         launch.actions.TimerAction(
             period=10.0,
             actions=[

@@ -313,8 +313,11 @@ class LineDemoController(Node):
         downward_error = y - target_y
         theta_error = _wrap_to_pi(target_theta - theta)
 
+        # Small upward feedforward to counteract gravity on the vertical wall,
+        # eliminating the steady-state downward sag that pure P-control produces.
+        gravity_ff = 0.05
         cmd = Twist()
-        cmd.linear.y = _clamp(k_y * downward_error, -max_lat, max_lat)
+        cmd.linear.y = _clamp(k_y * downward_error + gravity_ff, -max_lat, max_lat)
         cmd.angular.z = _clamp(omega_sign * k_theta * theta_error, -max_ang, max_ang)
 
         # Keep previous safety gate: reduce x motion when y/theta errors are large.
@@ -442,7 +445,8 @@ class LineDemoController(Node):
                     return
 
             self.get_logger().warn(
-                f'Pen probe failed after retry budget (line={line_id}, gap={self._pen_gap:.4f} m). '
+                f'Pen probe failed after retry budget '
+                f'(line={line_id}, gap={self._pen_gap:.4f} m). '
                 'Stopping demo safely.'
             )
             self._publish_zero_twist()
