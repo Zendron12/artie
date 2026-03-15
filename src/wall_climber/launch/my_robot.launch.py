@@ -253,6 +253,52 @@ def generate_launch_description():
             ]
         ),
 
+        # 10. Generic stroke executor
+        #     (/wall_climber/cmd_vel_auto + /wall_climber/pen_target)
+        launch.actions.TimerAction(
+            period=11.0,
+            actions=[
+                Node(
+                    package='wall_climber',
+                    executable='stroke_executor',
+                    name='stroke_executor',
+                    output='screen',
+                    parameters=[
+                        {'enabled': False},
+                        {'draw_speed': 0.45},
+                        {'reposition_speed': 0.80},
+                        {'target_theta': 0.0},
+                        {'k_y': 0.75},
+                        {'k_theta': 0.60},
+                        {'omega_sign': -1.0},
+                        {'max_lateral_cmd': 0.30},
+                        {'max_angular_cmd': 0.22},
+                        {'pos_tol_x': 0.03},
+                        {'pos_tol_y': 0.01},
+                        {'theta_tol': 0.03},
+                        {'pen_probe_step': 0.0025},
+                        {'pen_probe_period_cycles': 1},
+                        {'pen_settle_cycles': 4},
+                        {'pen_contact_timeout_sec': 1.5},
+                        {'pen_pose_timeout_sec': 0.5},
+                        {'contact_gap_min': -0.0018},
+                        {'contact_gap_max': 0.0018},
+                        {'lost_contact_cycles_before_reprobe': 8},
+                        {'lost_contact_gap_threshold': 0.004},
+                        {'draw_pen_extra_depth': 0.006},
+                        {'draw_pen_recover_step': 0.0008},
+                        {'pen_up_pos': 0.018},
+                        {'pen_clear_gap': 0.004},
+                        {'pen_lift_timeout_sec': 1.5},
+                        {'pen_down_min_pos': -0.010},
+                        {'pen_down_max_pos': -0.030},
+                        {'publish_zero_on_stop': True},
+                        {'pose_timeout_sec': 0.5},
+                    ],
+                ),
+            ]
+        ),
+
         # إغلاق نظيف
         launch.actions.RegisterEventHandler(
             event_handler=launch.event_handlers.OnProcessExit(
