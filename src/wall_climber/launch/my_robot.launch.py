@@ -254,7 +254,7 @@ def generate_launch_description():
         ),
 
         # 10. Generic stroke executor
-        #     (/wall_climber/cmd_vel_auto + /wall_climber/pen_target)
+        #     (/wall_climber/stroke_plan -> /wall_climber/cmd_vel_auto + /wall_climber/pen_target)
         launch.actions.TimerAction(
             period=11.0,
             actions=[
@@ -273,16 +273,10 @@ def generate_launch_description():
                         {'omega_sign': -1.0},
                         {'max_lateral_cmd': 0.30},
                         {'max_angular_cmd': 0.22},
-                        {'pos_tol_x': 0.03},
-                        {'pos_tol_y': 0.01},
-                        {'theta_tol': 0.03},
-                        {'pen_probe_step': 0.0025},
-                        {'pen_probe_period_cycles': 1},
-                        {'pen_settle_cycles': 4},
-                        {'pen_contact_timeout_sec': 1.5},
-                        {'pen_pose_timeout_sec': 0.5},
+                        {'contact_required_for_drawing': True},
                         {'contact_gap_min': -0.0018},
                         {'contact_gap_max': 0.0018},
+                        {'pen_settle_cycles': 4},
                         {'lost_contact_cycles_before_reprobe': 8},
                         {'lost_contact_gap_threshold': 0.004},
                         {'draw_pen_extra_depth': 0.006},
@@ -292,8 +286,8 @@ def generate_launch_description():
                         {'pen_lift_timeout_sec': 1.5},
                         {'pen_down_min_pos': -0.010},
                         {'pen_down_max_pos': -0.030},
-                        {'publish_zero_on_stop': True},
-                        {'pose_timeout_sec': 0.5},
+                        {'pen_probe_step': 0.0025},
+                        {'pen_contact_timeout_sec': 1.5},
                     ],
                 ),
             ]
