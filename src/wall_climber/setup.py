@@ -40,6 +40,7 @@ setup(
             'web_server = wall_climber.web_server:main',
             'pose_correction_controller = wall_climber.pose_correction_controller:main',
             'line_demo_controller = wall_climber.line_demo_controller:main',
+            'stroke_executor = wall_climber.stroke_executor:main',
         ],
     },
 )
