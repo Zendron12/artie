@@ -54,6 +54,7 @@ class StrokeExecutor(Node):
         self.declare_parameter('pen_probe_step', 0.0025)
         self.declare_parameter('pen_probe_period_cycles', 1)
         self.declare_parameter('pen_settle_cycles', 4)
+        self.declare_parameter('draw_start_delay_cycles', 2)  # Delay before enabling ink in DRAW_SEGMENT
         self.declare_parameter('pen_contact_timeout_sec', 1.5)
         self.declare_parameter('pen_pose_timeout_sec', 0.5)
         self.declare_parameter('contact_gap_min', -0.0018)
@@ -101,6 +102,7 @@ class StrokeExecutor(Node):
         self._probe_retries = 0
         self._pen_lift_state_start_sec = None
         self._next_state_after_pen_up = None
+        self._draw_segment_cycles = 0  # Track cycles in DRAW_SEGMENT before enabling ink
 
         self.create_subscription(
             String, '/wall_climber/stroke_plan', self._plan_cb, 10
@@ -373,6 +375,7 @@ class StrokeExecutor(Node):
             self._pen_settle_counter = 0
         if new_state == DRAW_SEGMENT:
             self._lost_contact_cycles = 0
+            self._draw_segment_cycles = 0  # Reset counter when entering DRAW_SEGMENT
 
     def _reset_execution(self):
         self._state = IDLE
@@ -386,6 +389,7 @@ class StrokeExecutor(Node):
         self._probe_retries = 0
         self._pen_lift_state_start_sec = None
         self._next_state_after_pen_up = None
+        self._draw_segment_cycles = 0
 
     def _now_sec(self):
         return self.get_clock().now().nanoseconds * 1e-9
@@ -778,7 +782,15 @@ class StrokeExecutor(Node):
                         self._draw_pen_target
                     )
                     self._publish_pen(self._draw_pen_target)
-                    self._publish_drawing_active(True)  # Enable ink rendering during active drawing
+
+                    # Only enable ink rendering after robot has started moving
+                    draw_start_delay = max(1, int(self.get_parameter('draw_start_delay_cycles').value))
+                    if self._draw_segment_cycles >= draw_start_delay:
+                        self._publish_drawing_active(True)
+                    else:
+                        self._publish_drawing_active(False)
+                    self._draw_segment_cycles += 1
+
                     speed_cap = draw_speed
                 else:
                     self._publish_pen(pen_up_pos)
