@@ -58,6 +58,9 @@ class MagneticSupervisorPlugin:
         self._trail_half_width = float(
             properties.get('trail_half_width', '0.010')
         )
+        self._trail_round_segments = max(
+            8, int(properties.get('trail_round_segments', '12'))
+        )
         self._trail_max = int(properties.get('trail_max', '8000'))
         self._trail_min_spacing = float(
             properties.get('trail_min_spacing', '0.004')
@@ -66,6 +69,8 @@ class MagneticSupervisorPlugin:
         self._trail_mesh_ready = False
         self._trail_point_field = None   # MFVec3f handle
         self._trail_index_field = None   # MFInt32 handle
+        self._trail_last_dir = None
+        self._trail_last_round_pos = None
 
         # --- board geometry / writable-area parameters ---
         self._board_center_x = float(properties.get('board_center_x', '0.0'))
@@ -451,22 +456,43 @@ class MagneticSupervisorPlugin:
 
         self._trail_segment_count += 1
 
-    def _add_trail_dot(self, x, z):
-        """Place a small square at first-contact point."""
+    def _trail_round_guard_dist(self):
+        return max(self._trail_min_spacing * 0.5, self._trail_half_width * 0.35)
+
+    def _should_skip_round_feature(self, x, z):
+        if self._trail_last_round_pos is None:
+            return False
+        lx, lz = self._trail_last_round_pos
+        return math.hypot(x - lx, z - lz) < self._trail_round_guard_dist()
+
+    def _add_trail_round_cap(self, x, z):
+        """Append a filled round cap to hide raw quad starts/ends."""
         if self._trail_segment_count >= self._trail_max:
             return
+        if self._should_skip_round_feature(x, z):
+            return
+
         hw = self._trail_half_width
+        segments = self._trail_round_segments
         n = self._trail_point_field.getCount()
-        self._trail_point_field.insertMFVec3f(-1, [x - hw, 0, z - hw])
-        self._trail_point_field.insertMFVec3f(-1, [x + hw, 0, z - hw])
-        self._trail_point_field.insertMFVec3f(-1, [x + hw, 0, z + hw])
-        self._trail_point_field.insertMFVec3f(-1, [x - hw, 0, z + hw])
-        self._trail_index_field.insertMFInt32(-1, n)
-        self._trail_index_field.insertMFInt32(-1, n + 1)
-        self._trail_index_field.insertMFInt32(-1, n + 2)
-        self._trail_index_field.insertMFInt32(-1, n + 3)
+        for i in range(segments):
+            angle = (2.0 * math.pi * i) / segments
+            self._trail_point_field.insertMFVec3f(
+                -1,
+                [x + math.cos(angle) * hw, 0, z + math.sin(angle) * hw],
+            )
+            self._trail_index_field.insertMFInt32(-1, n + i)
         self._trail_index_field.insertMFInt32(-1, -1)
         self._trail_segment_count += 1
+        self._trail_last_round_pos = (x, z)
+
+    def _add_trail_round_join(self, x, z):
+        # Round joins fill small gaps/overlaps when segment direction changes.
+        self._add_trail_round_cap(x, z)
+
+    def _add_trail_dot(self, x, z):
+        """Place a round first-contact cap instead of a square dot."""
+        self._add_trail_round_cap(x, z)
 
     def _draw_line_to(self, x, z):
         """Draw from last contact to (x, z) as a continuous quad."""
@@ -480,12 +506,23 @@ class MagneticSupervisorPlugin:
             return
 
         lx, lz = self._last_pos
-        dist = math.sqrt((x - lx) ** 2 + (z - lz) ** 2)
+        dx = x - lx
+        dz = z - lz
+        dist = math.sqrt(dx * dx + dz * dz)
         if dist < self._trail_min_spacing:
             return
 
+        dir_x = dx / dist
+        dir_z = dz / dist
+        if self._trail_last_dir is not None:
+            prev_x, prev_z = self._trail_last_dir
+            dot = max(-1.0, min(1.0, prev_x * dir_x + prev_z * dir_z))
+            if dot < 0.995:
+                self._add_trail_round_join(lx, lz)
+
         self._add_trail_quad(lx, lz, x, z)
         self._last_pos = (x, z)
+        self._trail_last_dir = (dir_x, dir_z)
 
     # ------------------------------------------------------------------
     def step(self):
@@ -635,5 +672,10 @@ class MagneticSupervisorPlugin:
                 x, z = pen_pos[0], pen_pos[2]
                 self._draw_line_to(x, z)
         else:
+            # Round end caps avoid leaving a raw quad termination on lift-off.
+            if trail_drawing_enabled and self._last_pos is not None:
+                self._add_trail_round_cap(self._last_pos[0], self._last_pos[1])
             # Pen is lifted — break the line so next contact starts fresh
             self._last_pos = None
+            self._trail_last_dir = None
+            self._trail_last_round_pos = None

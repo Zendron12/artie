@@ -27,6 +27,7 @@
       <margin_bottom>0.10</margin_bottom>
       <line_height>0.14</line_height>
       <trail_half_width>0.010</trail_half_width>
+      <trail_round_segments>12</trail_round_segments>
     </plugin>
   </webots>
 
