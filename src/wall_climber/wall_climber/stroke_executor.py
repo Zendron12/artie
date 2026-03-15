@@ -639,6 +639,8 @@ class StrokeExecutor(Node):
             if self._enabled_last and publish_zero_on_stop:
                 self._publish_zero_twist()
                 self._publish_pen(pen_up_pos)
+            # Re-enable drawing for manual control when stroke executor is disabled
+            self._publish_drawing_active(True)
             self._reset_execution()
             self._set_status('idle')
             self._enabled_last = False
@@ -686,7 +688,7 @@ class StrokeExecutor(Node):
         if self._state == IDLE:
             self._publish_zero_twist()
             self._publish_pen(pen_up_pos)
-            self._publish_drawing_active(False)
+            # Don't publish drawing_active in IDLE - allow manual control
 
         elif self._state == MOVE_TO_STROKE_START:
             stroke = self._current_stroke()
@@ -836,7 +838,8 @@ class StrokeExecutor(Node):
         elif self._state == DONE:
             self._publish_zero_twist()
             self._publish_pen(pen_up_pos)
-            self._publish_drawing_active(False)
+            # Re-enable drawing for manual control after stroke execution completes
+            self._publish_drawing_active(True)
 
         self._enabled_last = True
 

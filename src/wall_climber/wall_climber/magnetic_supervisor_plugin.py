@@ -123,7 +123,9 @@ class MagneticSupervisorPlugin:
             Float64, '/wall_climber/pen_gap', 1
         )
 
-        self._drawing_active = False
+        # Default to True to support manual pen control (keyboard plugin)
+        # stroke_executor will explicitly set this to False during non-drawing states
+        self._drawing_active = True
         self._drawing_active_sub = self._node.create_subscription(
             Bool, '/wall_climber/drawing_active', self._drawing_active_cb, 1
         )
