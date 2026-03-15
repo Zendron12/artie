@@ -126,6 +126,9 @@ class StrokeExecutor(Node):
         self._status_pub = self.create_publisher(
             String, '/wall_climber/stroke_executor_status', 10
         )
+        self._drawing_active_pub = self.create_publisher(
+            Bool, '/wall_climber/drawing_active', 10
+        )
 
         self._timer = self.create_timer(0.05, self._on_timer)
         self._set_status('idle')
@@ -339,6 +342,11 @@ class StrokeExecutor(Node):
         msg = Float64()
         msg.data = float(value)
         self._pen_pub.publish(msg)
+
+    def _publish_drawing_active(self, active):
+        msg = Bool()
+        msg.data = bool(active)
+        self._drawing_active_pub.publish(msg)
 
     def _publish_zero_twist(self):
         self._cmd_pub.publish(Twist())
@@ -678,6 +686,7 @@ class StrokeExecutor(Node):
         if self._state == IDLE:
             self._publish_zero_twist()
             self._publish_pen(pen_up_pos)
+            self._publish_drawing_active(False)
 
         elif self._state == MOVE_TO_STROKE_START:
             stroke = self._current_stroke()
@@ -689,6 +698,7 @@ class StrokeExecutor(Node):
                     self._set_state(ADVANCE_STROKE)
                 else:
                     self._publish_pen(pen_up_pos)
+                    self._publish_drawing_active(False)
                     cmd = self._tracking_cmd(
                         start_point[0],
                         start_point[1],
@@ -706,6 +716,7 @@ class StrokeExecutor(Node):
                             self._set_state(DRAW_SEGMENT)
 
         elif self._state == PEN_PROBE:
+            self._publish_drawing_active(False)  # Don't render ink during probing
             self._probe_step()
 
         elif self._state == PEN_SETTLE:
@@ -716,6 +727,7 @@ class StrokeExecutor(Node):
                 self._enabled_last = True
                 return
             self._publish_zero_twist()
+            self._publish_drawing_active(False)  # Don't render ink during settling
             if self._draw_pen_target is None:
                 self._draw_pen_target = float(self.get_parameter('pen_down_min_pos').value)
             self._publish_pen(self._draw_pen_target)
@@ -764,9 +776,11 @@ class StrokeExecutor(Node):
                         self._draw_pen_target
                     )
                     self._publish_pen(self._draw_pen_target)
+                    self._publish_drawing_active(True)  # Enable ink rendering during active drawing
                     speed_cap = draw_speed
                 else:
                     self._publish_pen(pen_up_pos)
+                    self._publish_drawing_active(False)  # Don't render ink when pen is up
                     speed_cap = reposition_speed
 
                 cmd = self._tracking_cmd(
@@ -822,6 +836,7 @@ class StrokeExecutor(Node):
         elif self._state == DONE:
             self._publish_zero_twist()
             self._publish_pen(pen_up_pos)
+            self._publish_drawing_active(False)
 
         self._enabled_last = True
 

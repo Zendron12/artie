@@ -123,6 +123,11 @@ class MagneticSupervisorPlugin:
             Float64, '/wall_climber/pen_gap', 1
         )
 
+        self._drawing_active = False
+        self._drawing_active_sub = self._node.create_subscription(
+            Bool, '/wall_climber/drawing_active', self._drawing_active_cb, 1
+        )
+
         self._board_info_json = json.dumps(
             {
                 'width': self._board_width,
@@ -270,6 +275,9 @@ class MagneticSupervisorPlugin:
         msg = String()
         msg.data = self._board_info_json
         self._board_info_pub.publish(msg)
+
+    def _drawing_active_cb(self, msg):
+        self._drawing_active = bool(msg.data)
 
     def _log_board_state(self, robot_x, robot_y, robot_theta, pen_pos, inside):
         if self._step_count % self._board_log_every != 0:
@@ -666,8 +674,11 @@ class MagneticSupervisorPlugin:
         self._publish_pen_gap(gap)
         trail_drawing_enabled = self._trail_segment_count < self._trail_max
 
-        if contact:
-            # Pen is touching — draw smooth interpolated line
+        # Only render ink when BOTH contact is true AND drawing_active is true
+        # This prevents the "blob" artifact during PEN_SETTLE when the pen is
+        # stationary but in contact with the board
+        if contact and self._drawing_active:
+            # Pen is touching AND we're in active drawing mode — draw smooth interpolated line
             if trail_drawing_enabled:
                 x, z = pen_pos[0], pen_pos[2]
                 self._draw_line_to(x, z)
@@ -675,7 +686,7 @@ class MagneticSupervisorPlugin:
             # Round end caps avoid leaving a raw quad termination on lift-off.
             if trail_drawing_enabled and self._last_pos is not None:
                 self._add_trail_round_cap(self._last_pos[0], self._last_pos[1])
-            # Pen is lifted — break the line so next contact starts fresh
+            # Pen is lifted or drawing is inactive — break the line so next contact starts fresh
             self._last_pos = None
             self._trail_last_dir = None
             self._trail_last_round_pos = None
