@@ -18,6 +18,7 @@ MOVE_TO_STROKE_START = 'MOVE_TO_STROKE_START'
 PEN_PROBE = 'PEN_PROBE'
 PEN_SETTLE = 'PEN_SETTLE'
 DRAW_SEGMENT = 'DRAW_SEGMENT'
+CORNER_SETTLE = 'CORNER_SETTLE'  # <--- تمت إضافة حالة الزاوية هنا
 PEN_UP = 'PEN_UP'
 ADVANCE_SEGMENT = 'ADVANCE_SEGMENT'
 ADVANCE_STROKE = 'ADVANCE_STROKE'
@@ -37,7 +38,7 @@ class StrokeExecutor(Node):
         super().__init__('stroke_executor')
 
         self.declare_parameter('enabled', False)
-        self.declare_parameter('draw_speed', 0.45)
+        self.declare_parameter('draw_speed', 0.03)  # تم التخفيف لضمان دقة الزوايا
         self.declare_parameter('reposition_speed', 0.80)
         self.declare_parameter('target_theta', 0.0)
         self.declare_parameter('k_y', 0.75)
@@ -46,15 +47,16 @@ class StrokeExecutor(Node):
         self.declare_parameter('max_lateral_cmd', 0.30)
         self.declare_parameter('max_angular_cmd', 0.22)
 
-        self.declare_parameter('pos_tol_x', 0.03)
-        self.declare_parameter('pos_tol_y', 0.01)
+        self.declare_parameter('pos_tol_x', 0.0015) # دقة 1.5 ملم للزاوية
+        self.declare_parameter('pos_tol_y', 0.0015) # دقة 1.5 ملم للزاوية
         self.declare_parameter('theta_tol', 0.03)
 
         self.declare_parameter('contact_required_for_drawing', True)
         self.declare_parameter('pen_probe_step', 0.0025)
         self.declare_parameter('pen_probe_period_cycles', 1)
         self.declare_parameter('pen_settle_cycles', 4)
-        self.declare_parameter('draw_start_delay_cycles', 2)  # Delay before enabling ink in DRAW_SEGMENT
+        self.declare_parameter('corner_settle_cycles', 10)  # بريك نصف ثانية في الزاوية
+        self.declare_parameter('draw_start_delay_cycles', 2)
         self.declare_parameter('pen_contact_timeout_sec', 1.5)
         self.declare_parameter('pen_pose_timeout_sec', 0.5)
         self.declare_parameter('contact_gap_min', -0.0018)
@@ -62,8 +64,8 @@ class StrokeExecutor(Node):
         self.declare_parameter('lost_contact_cycles_before_reprobe', 8)
         self.declare_parameter('lost_contact_gap_threshold', 0.004)
         self.declare_parameter('max_probe_retries_per_line', 3)
-        self.declare_parameter('draw_pen_extra_depth', 0.006)
-        self.declare_parameter('draw_pen_recover_step', 0.0008)
+        self.declare_parameter('draw_pen_extra_depth', 0.0) # 1 ملم ضغط للخط الناعم
+        self.declare_parameter('draw_pen_recover_step', 0.0)
 
         self.declare_parameter('pen_up_pos', 0.018)
         self.declare_parameter('pen_clear_gap', 0.004)
@@ -97,12 +99,13 @@ class StrokeExecutor(Node):
         self._probe_target = None
         self._probe_cycle_counter = 0
         self._pen_settle_counter = 0
+        self._corner_settle_counter = 0  # العداد الجديد
         self._draw_pen_target = None
         self._lost_contact_cycles = 0
         self._probe_retries = 0
         self._pen_lift_state_start_sec = None
         self._next_state_after_pen_up = None
-        self._draw_segment_cycles = 0  # Track cycles in DRAW_SEGMENT before enabling ink
+        self._draw_segment_cycles = 0
 
         self.create_subscription(
             String, '/wall_climber/stroke_plan', self._plan_cb, 10
@@ -373,9 +376,11 @@ class StrokeExecutor(Node):
             self._probe_cycle_counter = 0
         if new_state == PEN_SETTLE:
             self._pen_settle_counter = 0
+        if new_state == CORNER_SETTLE:       # تصفير عداد الاستراحة للزوايا
+            self._corner_settle_counter = 0
         if new_state == DRAW_SEGMENT:
             self._lost_contact_cycles = 0
-            self._draw_segment_cycles = 0  # Reset counter when entering DRAW_SEGMENT
+            self._draw_segment_cycles = 0
 
     def _reset_execution(self):
         self._state = IDLE
@@ -384,6 +389,7 @@ class StrokeExecutor(Node):
         self._probe_target = None
         self._probe_cycle_counter = 0
         self._pen_settle_counter = 0
+        self._corner_settle_counter = 0      # تصفير عداد الاستراحة
         self._draw_pen_target = None
         self._lost_contact_cycles = 0
         self._probe_retries = 0
@@ -692,7 +698,6 @@ class StrokeExecutor(Node):
         if self._state == IDLE:
             self._publish_zero_twist()
             self._publish_pen(pen_up_pos)
-            # Don't publish drawing_active in IDLE - allow manual control
 
         elif self._state == MOVE_TO_STROKE_START:
             stroke = self._current_stroke()
@@ -722,7 +727,7 @@ class StrokeExecutor(Node):
                             self._set_state(DRAW_SEGMENT)
 
         elif self._state == PEN_PROBE:
-            self._publish_drawing_active(False)  # Don't render ink during probing
+            self._publish_drawing_active(False)  
             self._probe_step()
 
         elif self._state == PEN_SETTLE:
@@ -733,7 +738,7 @@ class StrokeExecutor(Node):
                 self._enabled_last = True
                 return
             self._publish_zero_twist()
-            self._publish_drawing_active(False)  # Don't render ink during settling
+            self._publish_drawing_active(False) 
             if self._draw_pen_target is None:
                 self._draw_pen_target = float(self.get_parameter('pen_down_min_pos').value)
             self._publish_pen(self._draw_pen_target)
@@ -783,7 +788,6 @@ class StrokeExecutor(Node):
                     )
                     self._publish_pen(self._draw_pen_target)
 
-                    # Only enable ink rendering after robot has started moving
                     draw_start_delay = max(1, int(self.get_parameter('draw_start_delay_cycles').value))
                     if self._draw_segment_cycles >= draw_start_delay:
                         self._publish_drawing_active(True)
@@ -794,7 +798,7 @@ class StrokeExecutor(Node):
                     speed_cap = draw_speed
                 else:
                     self._publish_pen(pen_up_pos)
-                    self._publish_drawing_active(False)  # Don't render ink when pen is up
+                    self._publish_drawing_active(False) 
                     speed_cap = reposition_speed
 
                 cmd = self._tracking_cmd(
@@ -812,7 +816,25 @@ class StrokeExecutor(Node):
                         else:
                             self._set_state(ADVANCE_STROKE)
                     else:
-                        self._set_state(ADVANCE_SEGMENT)
+                        # هنا تم التعديل: إرسال الروبوت لحالة الاستراحة بدلاً من الضلع التالي
+                        self._set_state(CORNER_SETTLE)
+
+        # ---------------------------------------------------------
+        # الحالة الجديدة: ضربة بريك للزاوية (استراحة لتعديل العجلات)
+        # ---------------------------------------------------------
+        elif self._state == CORNER_SETTLE:
+            # 1. إيقاف الروبوت تماماً (سرعة صفر)
+            self._publish_zero_twist()
+            
+            # 2. إبقاء القلم على اللوح إذا كان نازل
+            if self._draw_pen_target is not None:
+                self._publish_pen(self._draw_pen_target)
+            
+            # 3. تشغيل العداد حتى ينتهي وقت الاستراحة
+            self._corner_settle_counter += 1
+            corner_settle_cycles = max(1, int(self.get_parameter('corner_settle_cycles').value))
+            if self._corner_settle_counter >= corner_settle_cycles:
+                self._set_state(ADVANCE_SEGMENT)
 
         elif self._state == PEN_UP:
             if not self._pen_data_fresh(pen_contact_timeout_sec):
@@ -850,7 +872,6 @@ class StrokeExecutor(Node):
         elif self._state == DONE:
             self._publish_zero_twist()
             self._publish_pen(pen_up_pos)
-            # Re-enable drawing for manual control after stroke execution completes
             self._publish_drawing_active(True)
 
         self._enabled_last = True
