@@ -18,7 +18,7 @@ MOVE_TO_STROKE_START = 'MOVE_TO_STROKE_START'
 PEN_PROBE = 'PEN_PROBE'
 PEN_SETTLE = 'PEN_SETTLE'
 DRAW_SEGMENT = 'DRAW_SEGMENT'
-CORNER_SETTLE = 'CORNER_SETTLE'  # <--- تمت إضافة حالة الزاوية هنا
+CORNER_SETTLE = 'CORNER_SETTLE'  # Brief pause at connected polyline corners.
 PEN_UP = 'PEN_UP'
 ADVANCE_SEGMENT = 'ADVANCE_SEGMENT'
 ADVANCE_STROKE = 'ADVANCE_STROKE'
@@ -64,12 +64,15 @@ class StrokeExecutor(Node):
         self.declare_parameter('lost_contact_cycles_before_reprobe', 8)
         self.declare_parameter('lost_contact_gap_threshold', 0.004)
         self.declare_parameter('max_probe_retries_per_line', 3)
-        self.declare_parameter('draw_pen_extra_depth', 0.0) # 1 ملم ضغط للخط الناعم
+        # Patch-3 keeps stroke starts shallow: no extra dig beyond first contact.
+        self.declare_parameter('draw_pen_extra_depth', 0.0)
+        # Patch-3 also disables ongoing depth recovery to avoid re-pushing inward.
         self.declare_parameter('draw_pen_recover_step', 0.0)
 
         self.declare_parameter('pen_up_pos', 0.018)
         self.declare_parameter('pen_clear_gap', 0.004)
         self.declare_parameter('pen_lift_timeout_sec', 1.5)
+        # More-negative pen targets mean deeper physical insertion toward the board.
         self.declare_parameter('pen_down_min_pos', -0.010)
         self.declare_parameter('pen_down_max_pos', -0.030)
 
@@ -99,7 +102,7 @@ class StrokeExecutor(Node):
         self._probe_target = None
         self._probe_cycle_counter = 0
         self._pen_settle_counter = 0
-        self._corner_settle_counter = 0  # العداد الجديد
+        self._corner_settle_counter = 0  # Counter for the brief corner pause.
         self._draw_pen_target = None
         self._lost_contact_cycles = 0
         self._probe_retries = 0
@@ -340,8 +343,9 @@ class StrokeExecutor(Node):
         self.get_logger().warn(reason)
         self._publish_zero_twist()
         self._publish_pen(float(self.get_parameter('pen_up_pos').value))
+        self._publish_drawing_active(False)
         self._set_status('error')
-        self._state = DONE
+        self._set_state(DONE)
 
     def _publish_pen(self, value):
         msg = Float64()
@@ -622,8 +626,9 @@ class StrokeExecutor(Node):
         self.get_logger().warn(reason)
         self._publish_zero_twist()
         self._publish_pen(float(self.get_parameter('pen_up_pos').value))
+        self._publish_drawing_active(False)
         self._set_status('error')
-        self._state = DONE
+        self._set_state(DONE)
 
     def _on_timer(self):
         enabled = bool(self.get_parameter('enabled').value)
@@ -635,6 +640,12 @@ class StrokeExecutor(Node):
         pen_pose_timeout_sec = float(self.get_parameter('pen_pose_timeout_sec').value)
         pen_contact_timeout_sec = float(self.get_parameter('pen_contact_timeout_sec').value)
         pen_settle_cycles = max(1, int(self.get_parameter('pen_settle_cycles').value))
+        corner_settle_cycles = max(
+            1, int(self.get_parameter('corner_settle_cycles').value)
+        )
+        draw_start_delay_cycles = max(
+            0, int(self.get_parameter('draw_start_delay_cycles').value)
+        )
         lost_contact_gap_threshold = float(
             self.get_parameter('lost_contact_gap_threshold').value
         )
@@ -790,10 +801,7 @@ class StrokeExecutor(Node):
                     )
                     self._publish_pen(self._draw_pen_target)
 
-                    draw_start_delay = max(
-                        0, int(self.get_parameter('draw_start_delay_cycles').value)
-                    )
-                    if self._draw_segment_cycles >= draw_start_delay:
+                    if self._draw_segment_cycles >= draw_start_delay_cycles:
                         self._publish_drawing_active(True)
                     else:
                         self._publish_drawing_active(False)
@@ -828,9 +836,6 @@ class StrokeExecutor(Node):
             if self._draw_pen_target is not None:
                 self._publish_pen(self._draw_pen_target)
             self._corner_settle_counter += 1
-            corner_settle_cycles = max(
-                1, int(self.get_parameter('corner_settle_cycles').value)
-            )
             if self._corner_settle_counter >= corner_settle_cycles:
                 self._set_state(ADVANCE_SEGMENT)
 
@@ -870,7 +875,7 @@ class StrokeExecutor(Node):
         elif self._state == DONE:
             self._publish_zero_twist()
             self._publish_pen(pen_up_pos)
-            self._publish_drawing_active(True)
+            self._publish_drawing_active(False)
 
         self._enabled_last = True
 
