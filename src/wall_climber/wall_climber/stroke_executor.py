@@ -38,7 +38,7 @@ class StrokeExecutor(Node):
         super().__init__('stroke_executor')
 
         self.declare_parameter('enabled', False)
-        self.declare_parameter('draw_speed', 0.03)  # تم التخفيف لضمان دقة الزوايا
+        self.declare_parameter('draw_speed', 0.10)
         self.declare_parameter('reposition_speed', 0.80)
         self.declare_parameter('target_theta', 0.0)
         self.declare_parameter('k_y', 0.75)
@@ -47,16 +47,16 @@ class StrokeExecutor(Node):
         self.declare_parameter('max_lateral_cmd', 0.30)
         self.declare_parameter('max_angular_cmd', 0.22)
 
-        self.declare_parameter('pos_tol_x', 0.0015) # دقة 1.5 ملم للزاوية
-        self.declare_parameter('pos_tol_y', 0.0015) # دقة 1.5 ملم للزاوية
+        self.declare_parameter('pos_tol_x', 0.004)
+        self.declare_parameter('pos_tol_y', 0.004)
         self.declare_parameter('theta_tol', 0.03)
 
         self.declare_parameter('contact_required_for_drawing', True)
         self.declare_parameter('pen_probe_step', 0.0025)
         self.declare_parameter('pen_probe_period_cycles', 1)
         self.declare_parameter('pen_settle_cycles', 4)
-        self.declare_parameter('corner_settle_cycles', 10)  # بريك نصف ثانية في الزاوية
-        self.declare_parameter('draw_start_delay_cycles', 2)
+        self.declare_parameter('corner_settle_cycles', 3)
+        self.declare_parameter('draw_start_delay_cycles', 0)
         self.declare_parameter('pen_contact_timeout_sec', 1.5)
         self.declare_parameter('pen_pose_timeout_sec', 0.5)
         self.declare_parameter('contact_gap_min', -0.0018)
@@ -367,6 +367,7 @@ class StrokeExecutor(Node):
     def _set_state(self, new_state):
         if self._state == new_state:
             return
+        previous_state = self._state
         self._state = new_state
         self.get_logger().info(
             f'entered {new_state} '
@@ -376,11 +377,12 @@ class StrokeExecutor(Node):
             self._probe_cycle_counter = 0
         if new_state == PEN_SETTLE:
             self._pen_settle_counter = 0
-        if new_state == CORNER_SETTLE:       # تصفير عداد الاستراحة للزوايا
+        if new_state == CORNER_SETTLE:
             self._corner_settle_counter = 0
         if new_state == DRAW_SEGMENT:
             self._lost_contact_cycles = 0
-            self._draw_segment_cycles = 0
+            if previous_state == PEN_SETTLE:
+                self._draw_segment_cycles = 0
 
     def _reset_execution(self):
         self._state = IDLE
@@ -389,7 +391,7 @@ class StrokeExecutor(Node):
         self._probe_target = None
         self._probe_cycle_counter = 0
         self._pen_settle_counter = 0
-        self._corner_settle_counter = 0      # تصفير عداد الاستراحة
+        self._corner_settle_counter = 0
         self._draw_pen_target = None
         self._lost_contact_cycles = 0
         self._probe_retries = 0
@@ -788,7 +790,9 @@ class StrokeExecutor(Node):
                     )
                     self._publish_pen(self._draw_pen_target)
 
-                    draw_start_delay = max(1, int(self.get_parameter('draw_start_delay_cycles').value))
+                    draw_start_delay = max(
+                        0, int(self.get_parameter('draw_start_delay_cycles').value)
+                    )
                     if self._draw_segment_cycles >= draw_start_delay:
                         self._publish_drawing_active(True)
                     else:
@@ -816,23 +820,17 @@ class StrokeExecutor(Node):
                         else:
                             self._set_state(ADVANCE_STROKE)
                     else:
-                        # هنا تم التعديل: إرسال الروبوت لحالة الاستراحة بدلاً من الضلع التالي
                         self._set_state(CORNER_SETTLE)
 
-        # ---------------------------------------------------------
-        # الحالة الجديدة: ضربة بريك للزاوية (استراحة لتعديل العجلات)
-        # ---------------------------------------------------------
         elif self._state == CORNER_SETTLE:
-            # 1. إيقاف الروبوت تماماً (سرعة صفر)
             self._publish_zero_twist()
-            
-            # 2. إبقاء القلم على اللوح إذا كان نازل
+            self._publish_drawing_active(False)
             if self._draw_pen_target is not None:
                 self._publish_pen(self._draw_pen_target)
-            
-            # 3. تشغيل العداد حتى ينتهي وقت الاستراحة
             self._corner_settle_counter += 1
-            corner_settle_cycles = max(1, int(self.get_parameter('corner_settle_cycles').value))
+            corner_settle_cycles = max(
+                1, int(self.get_parameter('corner_settle_cycles').value)
+            )
             if self._corner_settle_counter >= corner_settle_cycles:
                 self._set_state(ADVANCE_SEGMENT)
 

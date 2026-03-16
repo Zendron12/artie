@@ -685,19 +685,16 @@ class MagneticSupervisorPlugin:
         self._publish_pen_gap(gap)
         trail_drawing_enabled = self._trail_segment_count < self._trail_max
 
-        # Only render ink when BOTH contact is true AND drawing_active is true
-        # This prevents the "blob" artifact during PEN_SETTLE when the pen is
-        # stationary but in contact with the board
-        if contact and self._drawing_active:
-            # Pen is touching AND we're in active drawing mode — draw smooth interpolated line
-            if trail_drawing_enabled:
+        # Keep trail continuity while the pen is still touching the board but
+        # drawing is temporarily paused, for example during corner settling.
+        if contact:
+            if self._drawing_active and trail_drawing_enabled:
                 x, z = pen_pos[0], pen_pos[2]
                 self._draw_line_to(x, z)
         else:
-            # Round end caps avoid leaving a raw quad termination on lift-off.
+            # Only a real lift-off should cap and break the current stroke.
             if trail_drawing_enabled and self._last_pos is not None:
                 self._add_trail_round_cap(self._last_pos[0], self._last_pos[1])
-            # Pen is lifted or drawing is inactive — break the line so next contact starts fresh
             self._last_pos = None
             self._trail_last_dir = None
             self._trail_last_round_pos = None
