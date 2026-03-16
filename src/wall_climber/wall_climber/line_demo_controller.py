@@ -52,8 +52,8 @@ class LineDemoController(Node):
         self.declare_parameter('max_lateral_cmd', 0.30)
         self.declare_parameter('max_angular_cmd', 0.22)
 
-        self.declare_parameter('pos_tol_x', 0.03)
-        self.declare_parameter('pos_tol_y', 0.01)
+        self.declare_parameter('pos_tol_x', 0.015)
+        self.declare_parameter('pos_tol_y', 0.015)
         self.declare_parameter('theta_tol', 0.03)
         self.declare_parameter('y_capture_clamp_margin', 0.15)
 
@@ -68,8 +68,8 @@ class LineDemoController(Node):
         self.declare_parameter('lost_contact_cycles_before_reprobe', 8)
         self.declare_parameter('lost_contact_gap_threshold', 0.004)
         self.declare_parameter('max_probe_retries_per_line', 3)
-        self.declare_parameter('draw_pen_extra_depth', 0.006)
-        self.declare_parameter('draw_pen_recover_step', 0.0008)
+        self.declare_parameter('draw_pen_extra_depth', 0.0)
+        self.declare_parameter('draw_pen_recover_step', 0.0)
 
         self.declare_parameter('pen_up_pos', 0.020)
         self.declare_parameter('pen_clear_gap', 0.004)
