@@ -4,6 +4,7 @@ This node executes JSON stroke plans in board coordinates using the same
 contact-aware drawing behavior proven in line_demo_controller.
 """
 
+from dataclasses import dataclass
 import json
 import math
 
@@ -31,6 +32,23 @@ def _clamp(v, lo, hi):
 
 def _wrap_to_pi(a):
     return math.atan2(math.sin(a), math.cos(a))
+
+
+@dataclass(frozen=True)
+class PathPrimitive:
+    """Internal execution primitive derived from one normalized external stroke."""
+
+    kind: str
+    draw: bool
+    points: tuple[tuple[float, float], ...]
+
+
+@dataclass(frozen=True)
+class ExecutionPath:
+    """Internal path model consumed by the FSM after validation succeeds."""
+
+    frame: str
+    primitives: tuple[PathPrimitive, ...]
 
 
 class StrokeExecutor(Node):
@@ -94,9 +112,10 @@ class StrokeExecutor(Node):
         self._enabled_last = False
         self._status = None
 
-        self._current_plan = None
-        self._pending_plan = None
-        self._stroke_index = 0
+        self._pending_external_plan = None
+        self._current_external_plan = None
+        self._current_exec_path = None
+        self._primitive_index = 0
         self._segment_index = 0
 
         self._probe_target = None
@@ -187,7 +206,7 @@ class StrokeExecutor(Node):
             self._reject_plan(error)
             return
 
-        self._pending_plan = normalized
+        self._pending_external_plan = normalized
         if self._board is None:
             self.get_logger().warn(
                 'Received structurally valid stroke plan, but board_info is not ready yet; '
@@ -265,6 +284,27 @@ class StrokeExecutor(Node):
     def _segment_count_total(self, plan):
         return sum(max(len(stroke['points']) - 1, 0) for stroke in plan['strokes'])
 
+    def _build_execution_path(self, external_plan):
+        primitives = []
+        for stroke in external_plan['strokes']:
+            if stroke['type'] == 'line':
+                kind = 'line' if stroke['draw'] else 'travel'
+            else:
+                kind = 'polyline' if stroke['draw'] else 'travel'
+
+            primitives.append(
+                PathPrimitive(
+                    kind=kind,
+                    draw=bool(stroke['draw']),
+                    points=tuple(stroke['points']),
+                )
+            )
+
+        return ExecutionPath(
+            frame=str(external_plan['frame']),
+            primitives=tuple(primitives),
+        )
+
     def _segment_is_axis_aligned(self, start_point, end_point, epsilon=1e-6):
         dx = abs(float(end_point[0]) - float(start_point[0]))
         dy = abs(float(end_point[1]) - float(start_point[1]))
@@ -304,23 +344,28 @@ class StrokeExecutor(Node):
         return None
 
     def _finalize_pending_plan(self):
-        if self._pending_plan is None:
+        if self._pending_external_plan is None:
             return
 
-        error = self._validate_plan_points(self._pending_plan)
+        error = self._validate_plan_points(self._pending_external_plan)
         if error is not None:
-            self._pending_plan = None
+            self._pending_external_plan = None
             self._reject_plan(error)
             return
 
-        self._current_plan = self._pending_plan
-        self._pending_plan = None
+        self._current_external_plan = self._pending_external_plan
+        self._current_exec_path = self._build_execution_path(
+            self._current_external_plan
+        )
+        self._pending_external_plan = None
         self._reset_execution()
 
-        stroke_count = len(self._current_plan['strokes'])
-        segment_count = self._segment_count_total(self._current_plan)
+        stroke_count = len(self._current_external_plan['strokes'])
+        segment_count = self._segment_count_total(self._current_external_plan)
         first_stroke_type = (
-            self._current_plan['strokes'][0]['type'] if stroke_count > 0 else 'none'
+            self._current_external_plan['strokes'][0]['type']
+            if stroke_count > 0
+            else 'none'
         )
         self.get_logger().info(
             f'received plan: {stroke_count} strokes, {segment_count} segments total, '
@@ -375,7 +420,7 @@ class StrokeExecutor(Node):
         self._state = new_state
         self.get_logger().info(
             f'entered {new_state} '
-            f'(stroke={self._stroke_index}, segment={self._segment_index})'
+            f'(primitive={self._primitive_index}, segment={self._segment_index})'
         )
         if new_state == PEN_PROBE:
             self._probe_cycle_counter = 0
@@ -390,7 +435,7 @@ class StrokeExecutor(Node):
 
     def _reset_execution(self):
         self._state = IDLE
-        self._stroke_index = 0
+        self._primitive_index = 0
         self._segment_index = 0
         self._probe_target = None
         self._probe_cycle_counter = 0
@@ -441,28 +486,58 @@ class StrokeExecutor(Node):
         gap_max = float(self.get_parameter('contact_gap_max').value)
         return gap_min <= gap <= gap_max
 
-    def _current_stroke(self):
-        if self._current_plan is None:
+    def _current_primitive(self):
+        if self._current_exec_path is None:
             return None
-        strokes = self._current_plan.get('strokes', [])
-        if not (0 <= self._stroke_index < len(strokes)):
+        primitives = self._current_exec_path.primitives
+        if not (0 <= self._primitive_index < len(primitives)):
             return None
-        return strokes[self._stroke_index]
+        return primitives[self._primitive_index]
+
+    def _current_primitive_points(self):
+        primitive = self._current_primitive()
+        if primitive is None:
+            return ()
+        return primitive.points
+
+    def _current_primitive_start_point(self):
+        points = self._current_primitive_points()
+        if not points:
+            return None
+        return points[0]
+
+    def _current_primitive_end_point(self):
+        points = self._current_primitive_points()
+        if not points:
+            return None
+        return points[-1]
+
+    def _current_primitive_is_drawn(self):
+        primitive = self._current_primitive()
+        return bool(primitive is not None and primitive.draw)
 
     def _current_segment_points(self):
-        stroke = self._current_stroke()
-        if stroke is None:
+        points = self._current_primitive_points()
+        if not points:
             return None, None
-        points = stroke['points']
         if not (0 <= self._segment_index < len(points) - 1):
             return None, None
         return points[self._segment_index], points[self._segment_index + 1]
 
-    def _segment_is_last(self):
-        stroke = self._current_stroke()
-        if stroke is None:
+    def _current_segment_is_last(self):
+        points = self._current_primitive_points()
+        if not points:
             return True
-        return self._segment_index >= (len(stroke['points']) - 2)
+        return self._segment_index >= (len(points) - 2)
+
+    def _current_transition_keeps_pen_down(self):
+        primitive = self._current_primitive()
+        return bool(
+            primitive is not None
+            and primitive.kind == 'polyline'
+            and primitive.draw
+            and not self._current_segment_is_last()
+        )
 
     def _tracking_cmd(self, target_x, target_y, target_theta, speed_cap):
         k_y = float(self.get_parameter('k_y').value)
@@ -655,7 +730,7 @@ class StrokeExecutor(Node):
         publish_zero_on_stop = bool(self.get_parameter('publish_zero_on_stop').value)
         contact_required = bool(self.get_parameter('contact_required_for_drawing').value)
 
-        if self._pending_plan is not None and self._board is not None:
+        if self._pending_external_plan is not None and self._board is not None:
             self._finalize_pending_plan()
 
         if not enabled:
@@ -671,7 +746,10 @@ class StrokeExecutor(Node):
 
         if enabled and not self._enabled_last:
             self._reset_execution()
-            if self._current_plan is not None and len(self._current_plan['strokes']) > 0:
+            if (
+                self._current_exec_path is not None
+                and len(self._current_exec_path.primitives) > 0
+            ):
                 self._set_status('running')
                 self._set_state(MOVE_TO_STROKE_START)
                 self.get_logger().info('enabled=true, starting loaded stroke plan.')
@@ -680,7 +758,7 @@ class StrokeExecutor(Node):
                 self._set_status('idle')
 
         if self._board is None or not self._pose_fresh(pose_timeout_sec):
-            if self._current_plan is not None and self._state not in (IDLE, DONE):
+            if self._current_exec_path is not None and self._state not in (IDLE, DONE):
                 self._fail_execution(
                     'Robot pose/board data stale during stroke execution; stopping safely.'
                 )
@@ -692,7 +770,7 @@ class StrokeExecutor(Node):
             return
 
         if not self._pen_pose_fresh(pen_pose_timeout_sec):
-            if self._current_plan is not None and self._state not in (IDLE, DONE):
+            if self._current_exec_path is not None and self._state not in (IDLE, DONE):
                 self._fail_execution('Pen pose stale during stroke execution; stopping safely.')
             else:
                 self._publish_zero_twist()
@@ -701,7 +779,7 @@ class StrokeExecutor(Node):
             self._enabled_last = True
             return
 
-        if self._current_plan is None:
+        if self._current_exec_path is None:
             self._publish_zero_twist()
             self._publish_pen(pen_up_pos)
             self._set_status('idle')
@@ -713,8 +791,8 @@ class StrokeExecutor(Node):
             self._publish_pen(pen_up_pos)
 
         elif self._state == MOVE_TO_STROKE_START:
-            stroke = self._current_stroke()
-            if stroke is None:
+            primitive = self._current_primitive()
+            if primitive is None:
                 self._set_state(DONE)
             else:
                 start_point, _ = self._current_segment_points()
@@ -734,7 +812,7 @@ class StrokeExecutor(Node):
                         self._probe_retries = 0
                         self._lost_contact_cycles = 0
                         self._draw_pen_target = None
-                        if stroke['draw']:
+                        if self._current_primitive_is_drawn():
                             self._enter_probe_state(pen_up_pos)
                         else:
                             self._set_state(DRAW_SEGMENT)
@@ -760,12 +838,12 @@ class StrokeExecutor(Node):
                 self._set_state(DRAW_SEGMENT)
 
         elif self._state == DRAW_SEGMENT:
-            stroke = self._current_stroke()
+            primitive = self._current_primitive()
             start_point, end_point = self._current_segment_points()
-            if stroke is None or start_point is None or end_point is None:
+            if primitive is None or start_point is None or end_point is None:
                 self._set_state(ADVANCE_STROKE)
             else:
-                if stroke['draw']:
+                if self._current_primitive_is_drawn():
                     if not self._pen_data_fresh(pen_contact_timeout_sec):
                         self._fail_execution(
                             'Pen contact/gap data stale during DRAW_SEGMENT; stopping safely.'
@@ -822,8 +900,8 @@ class StrokeExecutor(Node):
                 self._cmd_pub.publish(cmd)
 
                 if self._segment_complete(end_point[0], end_point[1], target_theta):
-                    if self._segment_is_last():
-                        if stroke['draw']:
+                    if self._current_segment_is_last():
+                        if self._current_primitive_is_drawn():
                             self._start_pen_up_wait(ADVANCE_STROKE)
                         else:
                             self._set_state(ADVANCE_STROKE)
@@ -833,7 +911,7 @@ class StrokeExecutor(Node):
         elif self._state == CORNER_SETTLE:
             self._publish_zero_twist()
             self._publish_drawing_active(False)
-            if self._draw_pen_target is not None:
+            if self._current_transition_keeps_pen_down() and self._draw_pen_target is not None:
                 self._publish_pen(self._draw_pen_target)
             self._corner_settle_counter += 1
             if self._corner_settle_counter >= corner_settle_cycles:
@@ -849,24 +927,27 @@ class StrokeExecutor(Node):
             self._handle_pen_up_wait()
 
         elif self._state == ADVANCE_SEGMENT:
-            stroke = self._current_stroke()
-            if stroke is None:
+            primitive = self._current_primitive()
+            points = self._current_primitive_points()
+            if primitive is None:
                 self._set_state(ADVANCE_STROKE)
             else:
                 self._segment_index += 1
-                if self._segment_index >= len(stroke['points']) - 1:
+                if self._segment_index >= len(points) - 1:
                     self._set_state(ADVANCE_STROKE)
                 else:
                     self._lost_contact_cycles = 0
                     self._set_state(DRAW_SEGMENT)
 
         elif self._state == ADVANCE_STROKE:
-            self._stroke_index += 1
+            self._primitive_index += 1
             self._segment_index = 0
             self._probe_retries = 0
             self._lost_contact_cycles = 0
             self._draw_pen_target = None
-            if self._stroke_index >= len(self._current_plan['strokes']):
+            if self._current_exec_path is None:
+                self._set_state(DONE)
+            elif self._primitive_index >= len(self._current_exec_path.primitives):
                 self._set_status('done')
                 self._set_state(DONE)
             else:
