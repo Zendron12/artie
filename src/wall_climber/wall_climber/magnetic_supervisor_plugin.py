@@ -510,18 +510,27 @@ class MagneticSupervisorPlugin:
             if not self._init_trail_mesh():
                 return
 
+        # ---- التعديل السحري هنا ----
         if self._last_pos is None:
-            self._add_trail_dot(x, z)
+            # تم حذف رسم النقطة الابتدائية لمنع التكتل (Blob)
+            # فقط نحفظ الإحداثيات وننتظر تحرك الروبوت
             self._last_pos = (x, z)
+            
+            # إذا كان عندك متغير لحفظ الاتجاه (اختياري، يفضل تصفيره)
+            if hasattr(self, '_trail_last_dir'):
+                self._trail_last_dir = None
             return
+        # ---------------------------
 
         lx, lz = self._last_pos
         dx = x - lx
         dz = z - lz
         dist = math.sqrt(dx * dx + dz * dz)
+        
+        # شرط الحركة: لا ترسم إذا كانت المسافة أقل من الحد الأدنى
         if dist < self._trail_min_spacing:
             return
-
+        
         dir_x = dx / dist
         dir_z = dz / dist
         if self._trail_last_dir is not None:
