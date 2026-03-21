@@ -478,6 +478,9 @@ class StrokeExecutor(Node):
     def _pen_data_fresh(self, timeout_sec):
         return self._pen_contact_fresh(timeout_sec) and self._pen_gap_fresh(timeout_sec)
 
+    def _effective_contact(self, timeout_sec):
+        return self._pen_contact_fresh(timeout_sec) and self._pen_contact
+
     def _gap_contact_good(self, timeout_sec):
         if not self._pen_gap_fresh(timeout_sec):
             return False
@@ -624,9 +627,7 @@ class StrokeExecutor(Node):
         probe_step = float(self.get_parameter('pen_probe_step').value)
         probe_period = max(1, int(self.get_parameter('pen_probe_period_cycles').value))
         contact_timeout_sec = float(self.get_parameter('pen_contact_timeout_sec').value)
-        contact_gap_min = float(self.get_parameter('contact_gap_min').value)
         max_retries = max(0, int(self.get_parameter('max_probe_retries_per_line').value))
-        draw_pen_extra_depth = float(self.get_parameter('draw_pen_extra_depth').value)
 
         if not self._pen_data_fresh(contact_timeout_sec):
             self._fail_execution(
@@ -637,10 +638,11 @@ class StrokeExecutor(Node):
         if self._probe_target is None:
             self._probe_target = pen_up_pos
 
-        if self._gap_contact_good(contact_timeout_sec):
-            self._draw_pen_target = max(
+        if self._effective_contact(contact_timeout_sec):
+            self._draw_pen_target = _clamp(
+                self._probe_target,
                 pen_down_max,
-                self._probe_target - draw_pen_extra_depth,
+                pen_up_pos,
             )
             self._probe_retries = 0
             self._lost_contact_cycles = 0
@@ -649,21 +651,17 @@ class StrokeExecutor(Node):
 
         self._publish_zero_twist()
 
-        if self._pen_gap_fresh(contact_timeout_sec) and self._pen_gap < contact_gap_min:
-            self._probe_target = min(pen_up_pos, self._probe_target + probe_step)
-            self._probe_cycle_counter = 0
+        if self._probe_target > pen_down_min:
+            self._probe_target = pen_down_min
         else:
-            if self._probe_target > pen_down_min:
-                self._probe_target = pen_down_min
-            else:
-                self._probe_cycle_counter += 1
-                if self._probe_cycle_counter >= probe_period:
-                    self._probe_target = max(pen_down_max, self._probe_target - probe_step)
-                    self._probe_cycle_counter = 0
+            self._probe_cycle_counter += 1
+            if self._probe_cycle_counter >= probe_period:
+                self._probe_target = max(pen_down_max, self._probe_target - probe_step)
+                self._probe_cycle_counter = 0
 
         self._publish_pen(self._probe_target)
 
-        if self._probe_target <= pen_down_max and not self._gap_contact_good(contact_timeout_sec):
+        if self._probe_target <= pen_down_max and not self._effective_contact(contact_timeout_sec):
             if self._probe_retries < max_retries:
                 self._probe_retries += 1
                 self.get_logger().warn(
@@ -680,21 +678,10 @@ class StrokeExecutor(Node):
             )
 
     def _update_draw_pen_target(self, target):
-        pen_contact_timeout_sec = float(self.get_parameter('pen_contact_timeout_sec').value)
-        contact_gap_min = float(self.get_parameter('contact_gap_min').value)
-        contact_gap_max = float(self.get_parameter('contact_gap_max').value)
-        recover_step = float(self.get_parameter('draw_pen_recover_step').value)
         pen_down_max = float(self.get_parameter('pen_down_max_pos').value)
         pen_up_pos = float(self.get_parameter('pen_up_pos').value)
-
-        if not self._pen_gap_fresh(pen_contact_timeout_sec):
-            return target
-
-        if self._pen_gap > contact_gap_max:
-            target -= recover_step
-        elif self._pen_gap < contact_gap_min:
-            target += recover_step
-
+        # Collision-first contact keeps the current target shallow; legacy
+        # gap-window recovery parameters remain compatibility no-ops.
         return _clamp(target, pen_down_max, pen_up_pos)
 
     def _fail_execution(self, reason):
@@ -851,12 +838,9 @@ class StrokeExecutor(Node):
                         self._enabled_last = True
                         return
                     if contact_required:
-                        if self._gap_contact_good(pen_contact_timeout_sec):
+                        if self._effective_contact(pen_contact_timeout_sec):
                             self._lost_contact_cycles = 0
-                        elif (
-                            self._pen_gap_fresh(pen_contact_timeout_sec)
-                            and self._pen_gap > lost_contact_gap_threshold
-                        ):
+                        else:
                             self._lost_contact_cycles += 1
                             if (
                                 self._lost_contact_cycles
@@ -867,8 +851,6 @@ class StrokeExecutor(Node):
                                 )
                                 self._enter_probe_state(pen_up_pos)
                                 return
-                        else:
-                            self._lost_contact_cycles = 0
 
                     if self._draw_pen_target is None:
                         self._draw_pen_target = float(

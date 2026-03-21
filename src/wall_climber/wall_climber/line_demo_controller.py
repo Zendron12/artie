@@ -376,15 +376,13 @@ class LineDemoController(Node):
         probe_step = float(self.get_parameter('pen_probe_step').value)
         probe_period = max(1, int(self.get_parameter('pen_probe_period_cycles').value))
         contact_timeout_sec = float(self.get_parameter('pen_contact_timeout_sec').value)
-        contact_gap_min = float(self.get_parameter('contact_gap_min').value)
         max_retries = max(0, int(self.get_parameter('max_probe_retries_per_line').value))
-        draw_pen_extra_depth = float(self.get_parameter('draw_pen_extra_depth').value)
 
         if self._probe_target is None:
             self._probe_target = pen_up_pos
 
-        if self._gap_contact_good(contact_timeout_sec):
-            draw_pen = max(pen_down_max, self._probe_target - draw_pen_extra_depth)
+        if self._effective_contact(contact_timeout_sec):
+            draw_pen = _clamp(self._probe_target, pen_down_max, pen_up_pos)
             if on_success_state == DRAW_LINE1:
                 self._line1_draw_pen = draw_pen
                 self._line1_probe_retries = 0
@@ -399,25 +397,17 @@ class LineDemoController(Node):
 
         self._publish_zero_twist()
 
-        # Gap-aware probing:
-        # - If tip is too deep inside board, lift slightly.
-        # - Else keep probing downward gradually.
-        if self._pen_gap_fresh(contact_timeout_sec) and self._pen_gap < contact_gap_min:
-            self._probe_target = min(pen_up_pos, self._probe_target + probe_step)
-            self._probe_cycle_counter = 0
+        if self._probe_target > pen_down_min:
+            self._probe_target = pen_down_min
         else:
-            # First probing command jumps to min down position, then goes deeper gradually.
-            if self._probe_target > pen_down_min:
-                self._probe_target = pen_down_min
-            else:
-                self._probe_cycle_counter += 1
-                if self._probe_cycle_counter >= probe_period:
-                    self._probe_target = max(pen_down_max, self._probe_target - probe_step)
-                    self._probe_cycle_counter = 0
+            self._probe_cycle_counter += 1
+            if self._probe_cycle_counter >= probe_period:
+                self._probe_target = max(pen_down_max, self._probe_target - probe_step)
+                self._probe_cycle_counter = 0
 
         self._publish_pen(self._probe_target)
 
-        if self._probe_target <= pen_down_max and not self._gap_contact_good(contact_timeout_sec):
+        if self._probe_target <= pen_down_max and not self._effective_contact(contact_timeout_sec):
             if line_id == 'line1':
                 if self._line1_probe_retries < max_retries:
                     self._line1_probe_retries += 1
@@ -450,22 +440,9 @@ class LineDemoController(Node):
             self._set_state(DONE)
 
     def _update_draw_pen_target(self, target):
-        """Keep draw target near calibrated contact gap window during drawing."""
-        pen_contact_timeout_sec = float(self.get_parameter('pen_contact_timeout_sec').value)
-        contact_gap_min = float(self.get_parameter('contact_gap_min').value)
-        contact_gap_max = float(self.get_parameter('contact_gap_max').value)
-        recover_step = float(self.get_parameter('draw_pen_recover_step').value)
+        """Clamp the current draw target; legacy gap recovery is a no-op."""
         pen_down_max = float(self.get_parameter('pen_down_max_pos').value)
         pen_up_pos = float(self.get_parameter('pen_up_pos').value)
-
-        if not self._pen_gap_fresh(pen_contact_timeout_sec):
-            return target
-
-        if self._pen_gap > contact_gap_max:
-            target -= recover_step
-        elif self._pen_gap < contact_gap_min:
-            target += recover_step
-
         return _clamp(target, pen_down_max, pen_up_pos)
 
     def _on_timer(self):
@@ -561,12 +538,9 @@ class LineDemoController(Node):
 
         elif self._state == DRAW_LINE1:
             if contact_required:
-                if self._gap_contact_good(pen_contact_timeout_sec):
+                if self._effective_contact(pen_contact_timeout_sec):
                     self._line1_lost_contact_cycles = 0
-                elif (
-                    self._pen_gap_fresh(pen_contact_timeout_sec)
-                    and self._pen_gap > lost_contact_gap_threshold
-                ):
+                elif self._pen_contact_fresh(pen_contact_timeout_sec):
                     self._line1_lost_contact_cycles += 1
                     if self._line1_lost_contact_cycles >= lost_contact_cycles_before_reprobe:
                         self.get_logger().warn('Contact lost during DRAW_LINE1, re-probing.')
@@ -639,12 +613,9 @@ class LineDemoController(Node):
 
         elif self._state == DRAW_LINE2:
             if contact_required:
-                if self._gap_contact_good(pen_contact_timeout_sec):
+                if self._effective_contact(pen_contact_timeout_sec):
                     self._line2_lost_contact_cycles = 0
-                elif (
-                    self._pen_gap_fresh(pen_contact_timeout_sec)
-                    and self._pen_gap > lost_contact_gap_threshold
-                ):
+                elif self._pen_contact_fresh(pen_contact_timeout_sec):
                     self._line2_lost_contact_cycles += 1
                     if self._line2_lost_contact_cycles >= lost_contact_cycles_before_reprobe:
                         self.get_logger().warn('Contact lost during DRAW_LINE2, re-probing.')
