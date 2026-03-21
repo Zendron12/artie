@@ -58,7 +58,7 @@ class LineDemoController(Node):
         self.declare_parameter('y_capture_clamp_margin', 0.15)
 
         self.declare_parameter('contact_required_for_drawing', True)
-        self.declare_parameter('pen_probe_step', 0.006)
+        self.declare_parameter('pen_probe_step', 0.0005)
         self.declare_parameter('pen_probe_period_cycles', 1)
         self.declare_parameter('pen_settle_cycles', 4)
         self.declare_parameter('pen_contact_timeout_sec', 1.5)
@@ -370,7 +370,6 @@ class LineDemoController(Node):
             self._set_state(next_state)
 
     def _probe_step(self, on_success_state, line_id):
-        pen_down_min = float(self.get_parameter('pen_down_min_pos').value)
         pen_down_max = float(self.get_parameter('pen_down_max_pos').value)
         pen_up_pos = float(self.get_parameter('pen_up_pos').value)
         probe_step = float(self.get_parameter('pen_probe_step').value)
@@ -397,13 +396,10 @@ class LineDemoController(Node):
 
         self._publish_zero_twist()
 
-        if self._probe_target > pen_down_min:
-            self._probe_target = pen_down_min
-        else:
-            self._probe_cycle_counter += 1
-            if self._probe_cycle_counter >= probe_period:
-                self._probe_target = max(pen_down_max, self._probe_target - probe_step)
-                self._probe_cycle_counter = 0
+        self._probe_cycle_counter += 1
+        if self._probe_cycle_counter >= probe_period:
+            self._probe_target = max(pen_down_max, self._probe_target - probe_step)
+            self._probe_cycle_counter = 0
 
         self._publish_pen(self._probe_target)
 
