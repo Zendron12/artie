@@ -72,7 +72,7 @@ class MagneticSupervisorPlugin:
         )
         self._trail_max = int(properties.get('trail_max', '8000'))
         self._trail_min_spacing = float(
-            properties.get('trail_min_spacing', '0.004')
+            properties.get('trail_min_spacing', '0.0004')
         )
         self._trail_segment_count = 0
         self._trail_mesh_ready = False
@@ -831,19 +831,6 @@ class MagneticSupervisorPlugin:
             )
             return
 
-        pen_board_x, pen_board_y = self._world_to_board(pen_pos[0], pen_pos[2])
-        pen_inside = self._is_inside_writable(pen_board_x, pen_board_y)
-        if publish_due:
-            self._publish_pen_pose(pen_board_x, pen_board_y)
-            self._publish_pen_inside(pen_inside)
-        self._log_board_state(
-            robot_board_x,
-            robot_board_y,
-            robot_theta,
-            (pen_board_x, pen_board_y),
-            pen_inside,
-        )
-
         tip_geometry_ready = self._resolve_tip_geometry()
         pen_orientation = None
         try:
@@ -872,6 +859,23 @@ class MagneticSupervisorPlugin:
         else:
             self._pen_contact_latched = False
 
+        effective_pen_world = tip_center_world if tip_center_world is not None else pen_pos
+        pen_board_x, pen_board_y = self._world_to_board(
+            effective_pen_world[0],
+            effective_pen_world[2],
+        )
+        pen_inside = self._is_inside_writable(pen_board_x, pen_board_y)
+        if publish_due:
+            self._publish_pen_pose(pen_board_x, pen_board_y)
+            self._publish_pen_inside(pen_inside)
+        self._log_board_state(
+            robot_board_x,
+            robot_board_y,
+            robot_theta,
+            (pen_board_x, pen_board_y),
+            pen_inside,
+        )
+
         self._pen_contact_latched = contact
         self._publish_pen_contact(contact)
         self._publish_pen_gap(gap)
@@ -899,7 +903,7 @@ class MagneticSupervisorPlugin:
         # drawing is temporarily paused, for example during corner settling.
         if contact:
             if self._drawing_active and trail_drawing_enabled:
-                x, z = pen_pos[0], pen_pos[2]
+                x, z = effective_pen_world[0], effective_pen_world[2]
                 self._draw_line_to(x, z)
         else:
             # Only a real lift-off should cap and break the current stroke.

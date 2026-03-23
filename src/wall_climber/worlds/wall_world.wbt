@@ -8,7 +8,7 @@ WorldInfo {
   info [ "Wall Climbing Robot - Clean Environment" ]
   title "Wall Climbing Robot Lab"
   gravity 9.81
-  basicTimeStep 32
+  basicTimeStep 16
   contactProperties [ ContactProperties { coulombFriction [ 2.5 ] } ]
 }
 

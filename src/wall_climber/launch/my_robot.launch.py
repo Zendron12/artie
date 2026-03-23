@@ -1,9 +1,10 @@
 import os
 import launch
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from launch.substitutions import Command
+from launch.substitutions import Command, LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 from webots_ros2_driver.webots_launcher import WebotsLauncher
 from webots_ros2_driver.webots_controller import WebotsController
@@ -12,6 +13,7 @@ from webots_ros2_driver.webots_controller import WebotsController
 def generate_launch_description():
     package_name = 'wall_climber'
     pkg_dir = get_package_share_directory(package_name)
+    webots_prefix = LaunchConfiguration('webots_prefix')
 
     # 1. تحديد المسارات
     world_path = os.path.join(pkg_dir, "worlds", "wall_world.wbt")
@@ -35,7 +37,8 @@ def generate_launch_description():
     webots = WebotsLauncher(
         world=world_path,
         mode='realtime',
-        ros2_supervisor=True
+        ros2_supervisor=True,
+        prefix=webots_prefix,
     )
 
     # ==========================================================
@@ -127,6 +130,14 @@ def generate_launch_description():
     #   تجميع الكل وتشغيلهم بتسلسل زمني
     # ==========================================================
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'webots_prefix',
+            default_value='',
+            description=(
+                'Optional command prefix for the Webots process itself. '
+                'Example: webots_prefix:=mangohud'
+            ),
+        ),
         webots,
         webots._supervisor,
 
@@ -265,7 +276,7 @@ def generate_launch_description():
                     output='screen',
                     parameters=[
                         {'enabled': False},
-                        {'draw_speed': 0.10},
+                        {'draw_speed': 0.45},
                         {'reposition_speed': 0.80},
                         {'target_theta': 0.0},
                         {'k_y': 0.75},
