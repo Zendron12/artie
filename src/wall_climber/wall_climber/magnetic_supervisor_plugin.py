@@ -25,11 +25,8 @@ from std_msgs.msg import Bool, Float64, String
 
 
 class MagneticSupervisorPlugin:
-
-    # Marker tip is ~44 mm ahead of pen_holder centre in world +Y
-    # (URDF −Z  →  world +Y after spawn rotation 1 0 0 1.57)
-    _TIP_OFFSET_Y = 0.044
     _BOARD_FRAME_ID = 'board'
+    _SAFE_UNAVAILABLE_GAP = 1.0
 
     def init(self, webots_node, properties):
         self._supervisor = webots_node.robot
@@ -52,7 +49,19 @@ class MagneticSupervisorPlugin:
         self._pen_search_interval = 50  # retry every N steps if not found
         self._root_children = None     # root.children MFNode
         self._last_pos = None     # (x, z) of last contact position
-        self._contact_thresh = 0.008    # 8 mm — pen must be very close to draw
+        self._pen_contact_latched = False
+        self._tip_sphere_local_center = None
+        self._tip_sphere_radius = None
+        self._tip_geometry_ready = False
+        self._tip_geometry_warned = False
+        self._contact_engage_gap = float(
+            properties.get('pen_contact_engage_gap', '0.0005')
+        )
+        self._contact_release_gap = float(
+            properties.get('pen_contact_release_gap', '0.0012')
+        )
+        self._fallback_tip_sphere_local_center = None
+        self._fallback_tip_sphere_radius = None
 
         # Single-mesh trail (IndexedFaceSet) — one node, unlimited quads
         self._trail_half_width = float(
@@ -63,7 +72,7 @@ class MagneticSupervisorPlugin:
         )
         self._trail_max = int(properties.get('trail_max', '8000'))
         self._trail_min_spacing = float(
-            properties.get('trail_min_spacing', '0.004')
+            properties.get('trail_min_spacing', '0.0004')
         )
         self._trail_segment_count = 0
         self._trail_mesh_ready = False
@@ -104,6 +113,14 @@ class MagneticSupervisorPlugin:
             rclpy.init(args=None)
         self._node = rclpy.create_node('magnetic_supervisor')
         self._log = self._node.get_logger()
+        self._fallback_tip_sphere_local_center = self._optional_vec3_property(
+            properties,
+            'pen_tip_center',
+        )
+        self._fallback_tip_sphere_radius = self._optional_float_property(
+            properties,
+            'pen_tip_radius',
+        )
         self._robot_board_pub = self._node.create_publisher(
             Pose2D, '/wall_climber/robot_pose_board', 1
         )
@@ -121,6 +138,13 @@ class MagneticSupervisorPlugin:
         )
         self._pen_gap_pub = self._node.create_publisher(
             Float64, '/wall_climber/pen_gap', 1
+        )
+
+        # Default to True to support manual pen control (keyboard plugin)
+        # stroke_executor will explicitly set this to False during non-drawing states
+        self._drawing_active = True
+        self._drawing_active_sub = self._node.create_subscription(
+            Bool, '/wall_climber/drawing_active', self._drawing_active_cb, 1
         )
 
         self._board_info_json = json.dumps(
@@ -159,9 +183,32 @@ class MagneticSupervisorPlugin:
             f'line_height={self._line_height:.3f}'
         )
         self._log.info(
-            f'Pen contact threshold: abs(gap) < {self._contact_thresh:.4f} m'
+            'Pen contact hysteresis: '
+            f'engage<= {self._contact_engage_gap:.4f} m, '
+            f'release<= {self._contact_release_gap:.4f} m'
         )
         self._publish_board_info()
+
+    def _optional_float_property(self, properties, key):
+        if key not in properties:
+            return None
+        try:
+            return float(properties.get(key))
+        except Exception:
+            self._log.warn(f'Invalid plugin property {key!r}; ignoring it.')
+            return None
+
+    def _optional_vec3_property(self, properties, prefix):
+        keys = [f'{prefix}_x', f'{prefix}_y', f'{prefix}_z']
+        if not all(key in properties for key in keys):
+            return None
+        values = []
+        for key in keys:
+            value = self._optional_float_property(properties, key)
+            if value is None:
+                return None
+            values.append(value)
+        return tuple(values)
 
     # ------------------------------------------------------------------
     #  Scene-tree helpers
@@ -271,6 +318,9 @@ class MagneticSupervisorPlugin:
         msg.data = self._board_info_json
         self._board_info_pub.publish(msg)
 
+    def _drawing_active_cb(self, msg):
+        self._drawing_active = bool(msg.data)
+
     def _log_board_state(self, robot_x, robot_y, robot_theta, pen_pos, inside):
         if self._step_count % self._board_log_every != 0:
             return
@@ -372,6 +422,151 @@ class MagneticSupervisorPlugin:
             pass
 
         return None
+
+    def _field(self, node, name):
+        try:
+            return node.getField(name)
+        except Exception:
+            return None
+
+    def _field_sfvec3f(self, node, name):
+        field = self._field(node, name)
+        if field is None:
+            return None
+        try:
+            value = field.getSFVec3f()
+            return (float(value[0]), float(value[1]), float(value[2]))
+        except Exception:
+            return None
+
+    def _field_sffloat(self, node, name):
+        field = self._field(node, name)
+        if field is None:
+            return None
+        try:
+            return float(field.getSFFloat())
+        except Exception:
+            return None
+
+    def _field_sfnode(self, node, name):
+        field = self._field(node, name)
+        if field is None:
+            return None
+        try:
+            return field.getSFNode()
+        except Exception:
+            return None
+
+    def _vec3_add(self, a, b):
+        return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+    def _is_sphere_node(self, node):
+        radius = self._field_sffloat(node, 'radius')
+        if radius is None:
+            return False
+        return self._field(node, 'height') is None and self._field(node, 'size') is None
+
+    def _find_tip_sphere_geometry(self, node, accumulated_translation=(0.0, 0.0, 0.0)):
+        if node is None:
+            return None
+
+        local_translation = accumulated_translation
+        translation = self._field_sfvec3f(node, 'translation')
+        if translation is not None:
+            local_translation = self._vec3_add(local_translation, translation)
+
+        if self._is_sphere_node(node):
+            radius = self._field_sffloat(node, 'radius')
+            if radius is not None:
+                return local_translation, radius
+
+        geometry_node = self._field_sfnode(node, 'geometry')
+        if geometry_node is not None:
+            result = self._find_tip_sphere_geometry(geometry_node, local_translation)
+            if result is not None:
+                return result
+
+        child_node = self._field_sfnode(node, 'child')
+        if child_node is not None:
+            result = self._find_tip_sphere_geometry(child_node, local_translation)
+            if result is not None:
+                return result
+
+        children_field = self._field(node, 'children')
+        if children_field is not None:
+            try:
+                for index in range(children_field.getCount()):
+                    child = children_field.getMFNode(index)
+                    result = self._find_tip_sphere_geometry(child, local_translation)
+                    if result is not None:
+                        return result
+            except Exception:
+                pass
+
+        return None
+
+    def _resolve_tip_geometry_from_collision(self):
+        if self._pen_node is None:
+            return None
+        bounding_object = self._field_sfnode(self._pen_node, 'boundingObject')
+        if bounding_object is None:
+            return None
+        return self._find_tip_sphere_geometry(bounding_object)
+
+    def _resolve_tip_geometry(self):
+        if self._tip_geometry_ready:
+            return True
+
+        resolved = self._resolve_tip_geometry_from_collision()
+        source = 'pen_holder collision geometry'
+
+        if resolved is None:
+            if (
+                self._fallback_tip_sphere_local_center is not None
+                and self._fallback_tip_sphere_radius is not None
+            ):
+                resolved = (
+                    self._fallback_tip_sphere_local_center,
+                    self._fallback_tip_sphere_radius,
+                )
+                source = 'exact shared plugin properties'
+
+        if resolved is not None:
+            self._tip_sphere_local_center, self._tip_sphere_radius = resolved
+            self._tip_geometry_ready = True
+            self._tip_geometry_warned = False
+            self._log.info(
+                'Resolved pen-tip sphere from '
+                f'{source}: center={self._tip_sphere_local_center}, '
+                f'radius={self._tip_sphere_radius:.5f}'
+            )
+            return True
+
+        if not self._tip_geometry_warned:
+            self._log.error(
+                'Exact pen-tip geometry is unavailable; forcing pen_contact=false '
+                'and disabling trail drawing until exact geometry is available.'
+            )
+            self._tip_geometry_warned = True
+        return False
+
+    def _world_from_local(self, position, orientation, local_point):
+        if orientation is None or len(orientation) < 9:
+            return None
+        return (
+            float(position[0])
+            + float(orientation[0]) * local_point[0]
+            + float(orientation[1]) * local_point[1]
+            + float(orientation[2]) * local_point[2],
+            float(position[1])
+            + float(orientation[3]) * local_point[0]
+            + float(orientation[4]) * local_point[1]
+            + float(orientation[5]) * local_point[2],
+            float(position[2])
+            + float(orientation[6]) * local_point[0]
+            + float(orientation[7]) * local_point[1]
+            + float(orientation[8]) * local_point[2],
+        )
 
     # ------------------------------------------------------------------
     #  Trail drawing  (single IndexedFaceSet mesh)
@@ -501,14 +696,17 @@ class MagneticSupervisorPlugin:
                 return
 
         if self._last_pos is None:
-            self._add_trail_dot(x, z)
+            # Avoid stamping an initial blob; start the stroke after real motion.
             self._last_pos = (x, z)
+            if hasattr(self, '_trail_last_dir'):
+                self._trail_last_dir = None
             return
 
         lx, lz = self._last_pos
         dx = x - lx
         dz = z - lz
         dist = math.sqrt(dx * dx + dz * dz)
+
         if dist < self._trail_min_spacing:
             return
 
@@ -592,6 +790,7 @@ class MagneticSupervisorPlugin:
                     self._root_children = (
                         self._supervisor.getRoot().getField('children')
                     )
+                    self._resolve_tip_geometry()
                     self._log.info(
                         f'pen_holder found (id {self._pen_node.getId()}) '
                         '— trail drawing ENABLED'
@@ -632,7 +831,39 @@ class MagneticSupervisorPlugin:
             )
             return
 
-        pen_board_x, pen_board_y = self._world_to_board(pen_pos[0], pen_pos[2])
+        tip_geometry_ready = self._resolve_tip_geometry()
+        pen_orientation = None
+        try:
+            pen_orientation = self._pen_node.getOrientation()
+        except Exception:
+            pen_orientation = None
+
+        tip_center_world = None
+        gap = self._SAFE_UNAVAILABLE_GAP
+        contact = False
+        wall_front_y = self._wall_y - 0.005
+
+        if tip_geometry_ready and pen_orientation is not None:
+            tip_center_world = self._world_from_local(
+                pen_pos,
+                pen_orientation,
+                self._tip_sphere_local_center,
+            )
+            if tip_center_world is not None:
+                tip_surface_y = tip_center_world[1] + self._tip_sphere_radius
+                gap = wall_front_y - tip_surface_y
+                if self._pen_contact_latched:
+                    contact = gap <= self._contact_release_gap
+                else:
+                    contact = gap <= self._contact_engage_gap
+        else:
+            self._pen_contact_latched = False
+
+        effective_pen_world = tip_center_world if tip_center_world is not None else pen_pos
+        pen_board_x, pen_board_y = self._world_to_board(
+            effective_pen_world[0],
+            effective_pen_world[2],
+        )
         pen_inside = self._is_inside_writable(pen_board_x, pen_board_y)
         if publish_due:
             self._publish_pen_pose(pen_board_x, pen_board_y)
@@ -645,37 +876,39 @@ class MagneticSupervisorPlugin:
             pen_inside,
         )
 
-        # Log pen position periodically for debugging
-        if self._step_count % 200 == 0:
-            tip_y = pen_pos[1] + self._TIP_OFFSET_Y
-            self._log.info(
-                f'[trail] pen_holder=({pen_pos[0]:.3f}, {pen_pos[1]:.3f}, '
-                f'{pen_pos[2]:.3f})  tip_y={tip_y:.3f}  '
-                f'wall_front={self._wall_y - 0.005:.3f}  '
-                f'segs={self._trail_segment_count}'
-            )
-
-        # Contact check:  marker tip world Y  vs  whiteboard front face.
-        # The tip extends _TIP_OFFSET_Y (44mm) beyond pen_holder in +Y.
-        # Only draw when the tip is within _contact_thresh of the surface.
-        tip_y = pen_pos[1] + self._TIP_OFFSET_Y
-        wall_front_y = self._wall_y - 0.005   # front face of whiteboard
-        gap = wall_front_y - tip_y             # positive = tip hasn't reached wall
-        contact = abs(gap) < self._contact_thresh
+        self._pen_contact_latched = contact
         self._publish_pen_contact(contact)
         self._publish_pen_gap(gap)
-        trail_drawing_enabled = self._trail_segment_count < self._trail_max
 
+        if self._step_count % 200 == 0:
+            if tip_center_world is not None:
+                self._log.info(
+                    f'[trail] pen_holder=({pen_pos[0]:.3f}, {pen_pos[1]:.3f}, '
+                    f'{pen_pos[2]:.3f})  tip_center=({tip_center_world[0]:.3f}, '
+                    f'{tip_center_world[1]:.3f}, {tip_center_world[2]:.3f})  '
+                    f'radius={self._tip_sphere_radius:.4f}  gap={gap:.4f}  '
+                    f'wall_front={wall_front_y:.3f}  segs={self._trail_segment_count}'
+                )
+            else:
+                self._log.info(
+                    '[trail] exact tip geometry unavailable; '
+                    f'gap forced to {gap:.3f} and drawing disabled'
+                )
+
+        trail_drawing_enabled = (
+            self._trail_segment_count < self._trail_max and tip_geometry_ready
+        )
+
+        # Keep trail continuity while the pen is still touching the board but
+        # drawing is temporarily paused, for example during corner settling.
         if contact:
-            # Pen is touching — draw smooth interpolated line
-            if trail_drawing_enabled:
-                x, z = pen_pos[0], pen_pos[2]
+            if self._drawing_active and trail_drawing_enabled:
+                x, z = effective_pen_world[0], effective_pen_world[2]
                 self._draw_line_to(x, z)
         else:
-            # Round end caps avoid leaving a raw quad termination on lift-off.
+            # Only a real lift-off should cap and break the current stroke.
             if trail_drawing_enabled and self._last_pos is not None:
                 self._add_trail_round_cap(self._last_pos[0], self._last_pos[1])
-            # Pen is lifted — break the line so next contact starts fresh
             self._last_pos = None
             self._trail_last_dir = None
             self._trail_last_round_pos = None

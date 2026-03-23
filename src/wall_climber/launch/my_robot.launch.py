@@ -1,9 +1,10 @@
 import os
 import launch
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from launch.substitutions import Command
+from launch.substitutions import Command, LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 from webots_ros2_driver.webots_launcher import WebotsLauncher
 from webots_ros2_driver.webots_controller import WebotsController
@@ -12,6 +13,7 @@ from webots_ros2_driver.webots_controller import WebotsController
 def generate_launch_description():
     package_name = 'wall_climber'
     pkg_dir = get_package_share_directory(package_name)
+    webots_prefix = LaunchConfiguration('webots_prefix')
 
     # 1. تحديد المسارات
     world_path = os.path.join(pkg_dir, "worlds", "wall_world.wbt")
@@ -35,7 +37,8 @@ def generate_launch_description():
     webots = WebotsLauncher(
         world=world_path,
         mode='realtime',
-        ros2_supervisor=True
+        ros2_supervisor=True,
+        prefix=webots_prefix,
     )
 
     # ==========================================================
@@ -127,6 +130,14 @@ def generate_launch_description():
     #   تجميع الكل وتشغيلهم بتسلسل زمني
     # ==========================================================
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'webots_prefix',
+            default_value='',
+            description=(
+                'Optional command prefix for the Webots process itself. '
+                'Example: webots_prefix:=mangohud'
+            ),
+        ),
         webots,
         webots._supervisor,
 
@@ -246,7 +257,7 @@ def generate_launch_description():
                         {'pen_lift_timeout_sec': 1.5},
                         {'pen_down_min_pos': -0.010},
                         {'pen_down_max_pos': -0.030},
-                        {'pen_probe_step': 0.0025},
+                        {'pen_probe_step': 0.0005},
                         {'pen_contact_timeout_sec': 1.5},
                     ],
                 ),
@@ -273,10 +284,14 @@ def generate_launch_description():
                         {'omega_sign': -1.0},
                         {'max_lateral_cmd': 0.30},
                         {'max_angular_cmd': 0.22},
+                        {'pos_tol_x': 0.004},
+                        {'pos_tol_y': 0.004},
                         {'contact_required_for_drawing': True},
                         {'contact_gap_min': -0.0018},
                         {'contact_gap_max': 0.0018},
                         {'pen_settle_cycles': 4},
+                        {'corner_settle_cycles': 3},
+                        {'draw_start_delay_cycles': 0},
                         {'lost_contact_cycles_before_reprobe': 8},
                         {'lost_contact_gap_threshold': 0.004},
                         {'draw_pen_extra_depth': 0.0},
@@ -286,7 +301,7 @@ def generate_launch_description():
                         {'pen_lift_timeout_sec': 1.5},
                         {'pen_down_min_pos': -0.010},
                         {'pen_down_max_pos': -0.030},
-                        {'pen_probe_step': 0.0025},
+                        {'pen_probe_step': 0.0005},
                         {'pen_contact_timeout_sec': 1.5},
                     ],
                 ),

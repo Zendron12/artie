@@ -89,7 +89,9 @@ class SwerveKeyboardPlugin:
             str(properties.get('stop_pen_on_contact', 'true')).lower() == 'true'
         )
         self._auto_pen_target = self._auto_pen_up_pos
-        self._auto_pen_target_time = None
+        # Start safely with the pen raised before any controller publishes.
+        self._auto_pen_target_time = time.monotonic()
+        self._pen_pos = self._auto_pen_up_pos
         self._pen_contact = False
 
         # ---- ROS 2 manual-drive publisher ----------------------------
@@ -283,7 +285,7 @@ class SwerveKeyboardPlugin:
         if home_pressed:
             self._theta_L = 0.0
             self._theta_R = 0.0
-            self._pen_pos = 0.0
+            self._pen_pos = self._auto_pen_up_pos
 
         if not pen_down_pressed and not pen_up_pressed and not home_pressed:
             auto_fresh = (
