@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="wall_climber">
+
+    <material name="robot_orange"> <color rgba="1.0 0.35 0.05 1"/> </material>
+    <material name="robot_black"> <color rgba="0.06 0.06 0.06 1"/> </material>
+    <material name="robot_screen"> <color rgba="0.05 0.95 1.0 1"/> </material>
+    <material name="robot_dark_grey"> <color rgba="0.30 0.34 0.40 1"/> </material>
+
+    <xacro:include filename="$(find wall_climber)/urdf/base_body.xacro"/>
+    <xacro:include filename="$(find wall_climber)/urdf/robot_face_screen.xacro"/>
+    <xacro:include filename="$(find wall_climber)/urdf/swerve_wheels_and_magnets.xacro"/>
+    <xacro:include filename="$(find wall_climber)/urdf/pantograph_arm.xacro"/>
+
+    <xacro:base_body/>
+    <xacro:robot_face_screen/>
+    <xacro:swerve_wheels_and_magnets/>
+    <xacro:pantograph_arm/>
+
+    <webots>
+        <plugin type="wall_climber.swerve_drive_plugin.SwerveDrivePlugin">
+            <drive_speed>150.0</drive_speed>
+            <rotate_speed>60.0</rotate_speed>
+            <steer_threshold>0.03</steer_threshold>
+            <half_length>0.08</half_length>
+            <half_width>0.06</half_width>
+        </plugin>
+        <plugin type="wall_climber.swerve_keyboard_plugin.SwerveKeyboardPlugin">
+            <manual_linear_cmd>1.5</manual_linear_cmd>
+            <manual_angular_cmd>1.2</manual_angular_cmd>
+            <shoulder_step>0.035</shoulder_step>
+            <pen_step>0.004</pen_step>
+            <shoulder_min>-2.30</shoulder_min>
+            <shoulder_max>2.30</shoulder_max>
+            <elbow_min>-2.349</elbow_min>
+            <elbow_max>2.349</elbow_max>
+            <pen_min_pos>-0.030</pen_min_pos>
+            <pen_max_pos>0.020</pen_max_pos>
+            <pen_gap_deep_limit>-0.0010</pen_gap_deep_limit>
+            <auto_pen_up_pos>0.020</auto_pen_up_pos>
+            <auto_pen_down_pos>-0.020</auto_pen_down_pos>
+            <auto_pen_timeout_sec>0.5</auto_pen_timeout_sec>
+            <stop_pen_on_contact>true</stop_pen_on_contact>
+        </plugin>
+    </webots>
+
+    </robot>

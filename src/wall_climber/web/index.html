@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wall Climber — Control Panel</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #16213e;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 2px solid #0f3460;
+    }
+
+    header h1 {
+      font-size: 1.3rem;
+      color: #e94560;
+      font-weight: 600;
+    }
+
+    #status {
+      font-size: 0.85rem;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-weight: 500;
+    }
+
+    #status.connected    { background: #1b4332; color: #95d5b2; }
+    #status.disconnected { background: #5c1a1a; color: #f4a0a0; }
+    #status.connecting   { background: #5c4b1a; color: #f4d9a0; }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .panel {
+      background: #16213e;
+      border-radius: 12px;
+      border: 1px solid #0f3460;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+
+    .panel-header {
+      background: #0f3460;
+      padding: 10px 16px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-body {
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+    }
+
+    /* Camera feed */
+    #camera-container {
+      position: relative;
+      width: 100%;
+      max-width: 800px;
+      aspect-ratio: 4 / 3;
+      background: #0d1117;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    #camera-feed {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: none;
+    }
+
+    #camera-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #555;
+      gap: 10px;
+    }
+
+    #camera-placeholder svg {
+      width: 48px;
+      height: 48px;
+      opacity: 0.4;
+    }
+
+    #fps-counter {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(0,0,0,0.65);
+      color: #95d5b2;
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-family: monospace;
+    }
+
+    /* Drive controls */
+    .drive-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 64px);
+      grid-template-rows: repeat(3, 64px);
+      gap: 6px;
+      margin: 8px 0;
+    }
+
+    .drive-btn {
+      background: #1a1a2e;
+      border: 2px solid #0f3460;
+      border-radius: 10px;
+      color: #e0e0e0;
+      font-size: 1.3rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.1s;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .drive-btn:hover { border-color: #e94560; }
+    .drive-btn:active, .drive-btn.active {
+      background: #e94560;
+      border-color: #e94560;
+      color: #fff;
+    }
+
+    .drive-label {
+      font-size: 0.7rem;
+      color: #888;
+      text-align: center;
+      margin-top: 4px;
+    }
+
+    .info-row {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: #aaa;
+    }
+
+    .info-row span { color: #e94560; font-weight: 600; }
+
+    footer {
+      text-align: center;
+      padding: 16px;
+      color: #555;
+      font-size: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Wall Climber Control Panel</h1>
+  <div id="status" class="connecting">Connecting...</div>
+</header>
+
+<div class="container">
+
+  <!-- Camera panel -->
+  <div class="panel">
+    <div class="panel-header">
+      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+        <path d="M6.502 7a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/>
+        <path d="M14 3H2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zM2 4h12a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/>
+      </svg>
+      Camera Feed
+    </div>
+    <div class="panel-body">
+      <div id="camera-container">
+        <img id="camera-feed" alt="Camera Feed">
+        <div id="camera-placeholder">
+          <svg fill="currentColor" viewBox="0 0 16 16">
+            <path d="M10.5 8.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/>
+            <path d="M2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2zm.5 2a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1zm9 2.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z"/>
+          </svg>
+          <div>Waiting for camera feed...</div>
+        </div>
+        <div id="fps-counter">-- fps</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Drive panel -->
+  <div class="panel">
+    <div class="panel-header">
+      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+        <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/>
+        <path d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/>
+      </svg>
+      Drive Controls
+    </div>
+    <div class="panel-body">
+      <div class="drive-grid">
+        <div></div>
+        <button class="drive-btn" data-dir="forward" title="W / Up">&#9650;</button>
+        <div></div>
+        <button class="drive-btn" data-dir="left" title="A / Left">&#9664;</button>
+        <button class="drive-btn" data-dir="stop" title="Space" style="font-size:0.7rem;">STOP</button>
+        <button class="drive-btn" data-dir="right" title="D / Right">&#9654;</button>
+        <div></div>
+        <button class="drive-btn" data-dir="backward" title="S / Down">&#9660;</button>
+        <div></div>
+      </div>
+      <div style="display:flex; gap:10px; margin-top:6px;">
+        <button class="drive-btn" data-dir="rotate_ccw" title="Q" style="width:64px;height:40px;font-size:0.7rem;">&#8630; CCW</button>
+        <button class="drive-btn" data-dir="rotate_cw" title="E" style="width:64px;height:40px;font-size:0.7rem;">CW &#8631;</button>
+      </div>
+      <div class="drive-label">Click or use W/A/S/D keys &middot; Q/E to rotate &middot; Space to stop</div>
+    </div>
+  </div>
+
+  <div class="info-row">
+    <div>Topic: <span>/cmd_vel</span></div>
+    <div>Camera: <span>/vision_camera/image_raw/compressed</span></div>
+  </div>
+</div>
+
+<footer>
+  Wall Climber Robot &mdash; Phase 1 Web Interface
+</footer>
+
+<!-- roslibjs from CDN -->
+<script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+
+<script>
+(function() {
+  'use strict';
+
+  // ── Config ──────────────────────────────────────────────
+  const WS_URL   = `ws://${location.hostname}:9090`;
+  const CAM_TOPIC = '/vision_camera/image_raw/compressed';
+  const CMD_TOPIC = '/cmd_vel';
+  const DRIVE_SPEED  = 0.5;   // m/s  linear
+  const ROTATE_SPEED = 1.0;   // rad/s angular
+
+  // ── DOM refs ────────────────────────────────────────────
+  const statusEl   = document.getElementById('status');
+  const camImg     = document.getElementById('camera-feed');
+  const camPlaceEl = document.getElementById('camera-placeholder');
+  const fpsEl      = document.getElementById('fps-counter');
+
+  // ── FPS counter ─────────────────────────────────────────
+  let frameCount = 0;
+  let lastFpsTime = performance.now();
+  setInterval(() => {
+    const now = performance.now();
+    const dt  = (now - lastFpsTime) / 1000;
+    fpsEl.textContent = (frameCount / dt).toFixed(1) + ' fps';
+    frameCount = 0;
+    lastFpsTime = now;
+  }, 2000);
+
+  // ── ROS connection ──────────────────────────────────────
+  const ros = new ROSLIB.Ros({ url: WS_URL });
+
+  ros.on('connection', () => {
+    statusEl.textContent = 'Connected';
+    statusEl.className = 'connected';
+  });
+
+  ros.on('error', () => {
+    statusEl.textContent = 'Error';
+    statusEl.className = 'disconnected';
+  });
+
+  ros.on('close', () => {
+    statusEl.textContent = 'Disconnected';
+    statusEl.className = 'disconnected';
+    // Auto-reconnect
+    setTimeout(() => {
+      statusEl.textContent = 'Reconnecting...';
+      statusEl.className = 'connecting';
+      ros.connect(WS_URL);
+    }, 3000);
+  });
+
+  // ── Camera subscriber ───────────────────────────────────
+  const camSub = new ROSLIB.Topic({
+    ros: ros,
+    name: CAM_TOPIC,
+    messageType: 'sensor_msgs/CompressedImage',
+    throttle_rate: 100,     // max 10 updates/s on the JS side
+  });
+
+  camSub.subscribe(function(msg) {
+    camImg.src = 'data:image/jpeg;base64,' + msg.data;
+    camImg.style.display = 'block';
+    camPlaceEl.style.display = 'none';
+    frameCount++;
+  });
+
+  // ── Drive publisher ─────────────────────────────────────
+  const cmdPub = new ROSLIB.Topic({
+    ros: ros,
+    name: CMD_TOPIC,
+    messageType: 'geometry_msgs/Twist',
+  });
+
+  function sendTwist(lx, ly, az) {
+    cmdPub.publish(new ROSLIB.Message({
+      linear:  { x: lx, y: ly, z: 0 },
+      angular: { x: 0, y: 0, z: az },
+    }));
+  }
+
+  // Direction → twist mapping
+  const dirMap = {
+    forward:     () => sendTwist(0,  DRIVE_SPEED, 0),
+    backward:    () => sendTwist(0, -DRIVE_SPEED, 0),
+    left:        () => sendTwist(-DRIVE_SPEED, 0, 0),
+    right:       () => sendTwist( DRIVE_SPEED, 0, 0),
+    rotate_ccw:  () => sendTwist(0, 0,  ROTATE_SPEED),
+    rotate_cw:   () => sendTwist(0, 0, -ROTATE_SPEED),
+    stop:        () => sendTwist(0, 0, 0),
+  };
+
+  // Button press/release
+  let driveInterval = null;
+  document.querySelectorAll('.drive-btn').forEach(btn => {
+    const dir = btn.dataset.dir;
+
+    function startDrive(e) {
+      e.preventDefault();
+      btn.classList.add('active');
+      if (dirMap[dir]) dirMap[dir]();
+      clearInterval(driveInterval);
+      if (dir !== 'stop') {
+        driveInterval = setInterval(() => dirMap[dir](), 100);
+      }
+    }
+
+    function stopDrive(e) {
+      e.preventDefault();
+      btn.classList.remove('active');
+      clearInterval(driveInterval);
+      sendTwist(0, 0, 0);
+    }
+
+    btn.addEventListener('mousedown', startDrive);
+    btn.addEventListener('mouseup', stopDrive);
+    btn.addEventListener('mouseleave', stopDrive);
+    btn.addEventListener('touchstart', startDrive, { passive: false });
+    btn.addEventListener('touchend', stopDrive, { passive: false });
+  });
+
+  // Keyboard drive (only when not typing in an input)
+  const keyDirMap = {
+    'KeyW': 'forward',  'ArrowUp':    'forward',
+    'KeyS': 'backward', 'ArrowDown':  'backward',
+    'KeyA': 'left',     'ArrowLeft':  'left',
+    'KeyD': 'right',    'ArrowRight': 'right',
+    'KeyQ': 'rotate_ccw',
+    'KeyE': 'rotate_cw',
+    'Space': 'stop',
+  };
+
+  const activeKeys = new Set();
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    const dir = keyDirMap[e.code];
+    if (!dir || activeKeys.has(e.code)) return;
+    e.preventDefault();
+    activeKeys.add(e.code);
+    const btn = document.querySelector(`.drive-btn[data-dir="${dir}"]`);
+    if (btn) btn.classList.add('active');
+    if (dirMap[dir]) dirMap[dir]();
+  });
+
+  document.addEventListener('keyup', (e) => {
+    const dir = keyDirMap[e.code];
+    if (!dir) return;
+    activeKeys.delete(e.code);
+    const btn = document.querySelector(`.drive-btn[data-dir="${dir}"]`);
+    if (btn) btn.classList.remove('active');
+    if (activeKeys.size === 0) sendTwist(0, 0, 0);
+  });
+
+})();
+</script>
+
+</body>
+</html>
