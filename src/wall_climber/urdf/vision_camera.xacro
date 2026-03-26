@@ -9,7 +9,8 @@
   <xacro:property name="body_length" value="0.15"/>
   <xacro:property name="body_height" value="0.08"/>
   <xacro:property name="camera_size" value="0.03"/>
-  <xacro:property name="camera_offset_z" value="0.05"/>
+  <xacro:property name="body_raise" value="0.0"/>
+  <xacro:property name="camera_offset_z" value="0.0"/>
   <xacro:property name="image_width" value="1920"/>
   <xacro:property name="image_height" value="1080"/>
   <xacro:property name="camera_fov" value="1.2"/>
@@ -70,6 +71,24 @@
         <color rgba="1.0 0.5 0.0 1.0"/>
       </material>
     </visual>
+    <visual>
+      <origin xyz="${body_length / 2 + 0.002} 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.004 ${body_width * 0.82} ${body_height * 0.82}"/>
+      </geometry>
+      <material name="body_front_panel">
+        <color rgba="0.10 0.11 0.13 1.0"/>
+      </material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 ${body_height / 2 + 0.005}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${body_length * 0.86} ${body_width * 0.86} 0.010"/>
+      </geometry>
+      <material name="body_top_cap">
+        <color rgba="0.18 0.18 0.20 1.0"/>
+      </material>
+    </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
@@ -89,7 +108,7 @@
       <geometry>
         <box size="${camera_size} ${camera_size} ${camera_size}"/>
       </geometry>
-      <material name="blue">
+      <material name="camera_housing">
         <color rgba="0.0 0.5 1.0 1.0"/>
       </material>
     </visual>
@@ -117,7 +136,7 @@
   <joint name="pan_joint" type="revolute">
     <parent link="stand_link"/>
     <child link="body_link"/>
-    <origin xyz="0 0 ${stand_height + body_height / 2}" rpy="0 0 0"/>
+    <origin xyz="0 0 ${stand_height + body_height / 2 + body_raise}" rpy="0 0 0"/>
     <axis xyz="0 0 1"/>
     <limit lower="-3.14159" upper="3.14159" effort="10.0" velocity="1.5"/>
     <dynamics damping="0.3" friction="0.05"/>
@@ -126,7 +145,7 @@
   <joint name="body_to_camera" type="fixed">
     <parent link="body_link"/>
     <child link="camera_link"/>
-    <origin xyz="${body_length / 2 + camera_size / 2} 0 ${camera_offset_z}" rpy="-1.5708 0 -1.5708"/>
+    <origin xyz="${body_length / 2} 0 ${camera_offset_z}" rpy="-1.5708 0 -1.5708"/>
   </joint>
 
   <joint name="camera_to_optical" type="fixed">

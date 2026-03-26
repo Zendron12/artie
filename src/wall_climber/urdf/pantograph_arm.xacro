@@ -38,7 +38,7 @@
         <xacro:property name="marker_h"      value="0.060"/>  <!-- marker body length       -->
         <xacro:property name="marker_tip_r"  value="0.006"/>  <!-- marker tip radius        -->
         <xacro:property name="marker_tip_h"  value="0.012"/>  <!-- marker tip length        -->
-        <xacro:property name="marker_tip_contact_r" value="0.004"/> <!-- smooth contact sphere -->
+        <xacro:property name="marker_tip_contact_r" value="0.005"/> <!-- slightly larger smooth contact sphere -->
         <xacro:property name="marker_tip_front_z" value="${-(marker_h + marker_tip_h + 0.002) + 0.03}"/>
         <xacro:property name="marker_tip_contact_z" value="${marker_tip_front_z + marker_tip_contact_r}"/>
         <xacro:property name="arm_y"         value="0.10"/>   <!-- Y offset on chassis (top edge) -->
@@ -201,7 +201,11 @@
             <origin xyz="0 ${fore_len} 0" rpy="0 0 0"/>
             <axis xyz="0 0 1"/>
             <limit lower="-0.04" upper="0.02" effort="20" velocity="3.0"/>
-            <dynamics damping="0.1" friction="0.05"/>
+            <!-- Keep a small amount of local resistance here. Fully zeroing the
+                 prismatic joint makes the pen assembly chatter against the board
+                 under contact, which shows up as body tilt and left/right shimmy
+                 while drawing. -->
+            <dynamics damping="0.06" friction="0.02"/>
         </joint>
 
         <link name="pen_holder">
@@ -221,7 +225,9 @@
                 <material name="cap_band"><color rgba="0.15 0.15 0.15 1.0"/></material>
             </visual>
             <visual>
-                <origin xyz="0 0 ${-(marker_h + marker_tip_h/2 + 0.002) + 0.03}"/>
+                <!-- Keep the visual tip flush with the front band so the marker
+                     reads as one continuous body instead of separate pieces. -->
+                <origin xyz="0 0 ${-(marker_h + marker_tip_h/2) + 0.03}"/>
                 <geometry><cylinder radius="${marker_tip_r}" length="${marker_tip_h}"/></geometry>
                 <material name="tip_dark"><color rgba="0.08 0.08 0.08 1.0"/></material>
             </visual>
