@@ -41,7 +41,6 @@ setup(
             'pose_correction_controller = wall_climber.pose_correction_controller:main',
             'line_demo_controller = wall_climber.line_demo_controller:main',
             'stroke_executor = wall_climber.stroke_executor:main',
-            'rviz_trail_renderer = wall_climber.rviz_trail_renderer:main',
         ],
     },
 )
