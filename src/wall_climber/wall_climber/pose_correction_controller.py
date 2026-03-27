@@ -5,6 +5,7 @@ import math
 import rclpy
 from geometry_msgs.msg import Pose2D, Twist
 from rclpy.node import Node
+from std_msgs.msg import String
 
 
 def _clamp(value, lo, hi):
@@ -40,6 +41,7 @@ class PoseCorrectionController(Node):
         self._captured_target_y = None
         self._captured_target_theta = None
         self._last_enabled = None
+        self._stroke_executor_status = None
 
         self._last_warn_sec = -1e9
         self._last_debug_sec = -1e9
@@ -50,6 +52,12 @@ class PoseCorrectionController(Node):
             self._pose_cb,
             10,
         )
+        self._stroke_executor_status_sub = self.create_subscription(
+            String,
+            '/wall_climber/stroke_executor_status',
+            self._stroke_executor_status_cb,
+            10,
+        )
         self._cmd_pub = self.create_publisher(Twist, '/wall_climber/cmd_vel_auto', 10)
 
         self._timer = self.create_timer(0.05, self._on_timer)  # 20 Hz
@@ -58,6 +66,9 @@ class PoseCorrectionController(Node):
     def _pose_cb(self, msg):
         self._pose = msg
         self._pose_stamp = self.get_clock().now()
+
+    def _stroke_executor_status_cb(self, msg):
+        self._stroke_executor_status = str(msg.data).strip()
 
     def _publish_zero(self):
         msg = Twist()
@@ -109,6 +120,14 @@ class PoseCorrectionController(Node):
         if not enabled:
             if self._last_enabled and publish_zero_on_disable:
                 self._publish_zero()
+            self._last_enabled = enabled
+            return
+
+        if self._stroke_executor_status == 'running':
+            self._log_warn_throttled(
+                'stroke_executor_status=running; suppressing pose correction '
+                'output on /wall_climber/cmd_vel_auto.'
+            )
             self._last_enabled = enabled
             return
 

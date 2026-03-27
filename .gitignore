@@ -1,0 +1,6 @@
+# VS Code local workspace metadata
+.vscode/
+
+# Python cache
+__pycache__/
+*.pyc

@@ -993,6 +993,12 @@ class StrokeExecutor(Node):
         probe_period = self._tick_params.pen_probe_period_cycles
         contact_timeout_sec = self._tick_params.pen_contact_timeout_sec
         max_retries = self._tick_params.max_probe_retries_per_line
+        min_probe_descent = max(3.0 * probe_step, 0.0015)
+        min_contact_accept_target = _clamp(
+            pen_up_pos - min_probe_descent,
+            pen_down_max,
+            pen_up_pos,
+        )
 
         if not self._pen_data_fresh(contact_timeout_sec):
             self._fail_execution(
@@ -1003,7 +1009,14 @@ class StrokeExecutor(Node):
         if self._probe_target is None:
             self._probe_target = pen_up_pos
 
-        if self._effective_contact(contact_timeout_sec):
+        # Reject obviously spurious early contact while the probe is still
+        # effectively at pen-up. This keeps probing collision-first, but avoids
+        # accepting stale/false contact before the tool has descended enough to
+        # make first contact physically plausible.
+        if (
+            self._effective_contact(contact_timeout_sec)
+            and self._probe_target <= min_contact_accept_target
+        ):
             self._draw_pen_target = _clamp(
                 self._probe_target,
                 pen_down_max,
