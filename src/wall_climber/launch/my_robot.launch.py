@@ -308,6 +308,23 @@ def generate_launch_description():
             ]
         ),
 
+        # 11.5 Arm-only writer controller
+        #      (/wall_climber/arm_stroke_plan -> /wall_climber/arm_joint_targets + /wall_climber/pen_target)
+        launch.actions.TimerAction(
+            period=12.0,
+            actions=[
+                Node(
+                    package='wall_climber',
+                    executable='arm_writer_controller',
+                    name='arm_writer_controller',
+                    output='screen',
+                    parameters=[
+                        {'enabled': False},
+                    ],
+                ),
+            ]
+        ),
+
         # إغلاق نظيف
         launch.actions.RegisterEventHandler(
             event_handler=launch.event_handlers.OnProcessExit(

@@ -12,6 +12,7 @@ import time
 
 import rclpy
 from geometry_msgs.msg import Twist
+from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Float64
 
 
@@ -93,6 +94,11 @@ class SwerveKeyboardPlugin:
         self._auto_pen_target_time = time.monotonic()
         self._pen_pos = self._auto_pen_up_pos
         self._pen_contact = False
+        self._pen_gap = float('nan')
+        self._external_theta_L = None
+        self._external_theta_R = None
+        self._external_arm_target_time = None
+        self._external_arm_target_timeout_sec = 0.25
 
         # ---- ROS 2 manual-drive publisher ----------------------------
         if not rclpy.ok():
@@ -104,8 +110,17 @@ class SwerveKeyboardPlugin:
         self._pen_target_sub = self._ros_node.create_subscription(
             Float64, '/wall_climber/pen_target', self._pen_target_cb, 1
         )
+        self._arm_target_sub = self._ros_node.create_subscription(
+            JointState,
+            '/wall_climber/arm_joint_targets',
+            self._arm_target_cb,
+            1,
+        )
         self._pen_contact_sub = self._ros_node.create_subscription(
             Bool, '/wall_climber/pen_contact', self._pen_contact_cb, 1
+        )
+        self._pen_gap_sub = self._ros_node.create_subscription(
+            Float64, '/wall_climber/pen_gap', self._pen_gap_cb, 1
         )
         self._last_drive_nonzero = False
 
@@ -121,6 +136,10 @@ class SwerveKeyboardPlugin:
             f'elbow=[{self._elbow_min:.3f},{self._elbow_max:.3f}] '
             f'pen=[{self._pen_min_pos:.3f},{self._pen_max_pos:.3f}] '
             f'gap_deep_limit={self._pen_gap_deep_limit:.4f}'
+        )
+        print(
+            '[SwerveKB] ARM:   fresh /wall_climber/arm_joint_targets override '
+            f'keyboard shoulders for {self._external_arm_target_timeout_sec:.2f}s'
         )
         print('[SwerveKB] Closed-loop 5-bar constraint active (elbows auto-computed)')
 
@@ -223,6 +242,19 @@ class SwerveKeyboardPlugin:
     def _pen_contact_cb(self, msg):
         self._pen_contact = bool(msg.data)
 
+    def _pen_gap_cb(self, msg):
+        self._pen_gap = float(msg.data)
+
+    def _arm_target_cb(self, msg):
+        if len(msg.name) != len(msg.position):
+            return
+        mapping = dict(zip(msg.name, msg.position))
+        if 'left_shoulder_joint' not in mapping or 'right_shoulder_joint' not in mapping:
+            return
+        self._external_theta_L = float(mapping['left_shoulder_joint'])
+        self._external_theta_R = float(mapping['right_shoulder_joint'])
+        self._external_arm_target_time = time.monotonic()
+
     # ------------------------------------------------------------------
     def step(self):
         rclpy.spin_once(self._ros_node, timeout_sec=0)
@@ -286,6 +318,17 @@ class SwerveKeyboardPlugin:
             self._theta_L = 0.0
             self._theta_R = 0.0
             self._pen_pos = self._auto_pen_up_pos
+
+        external_fresh = (
+            self._external_arm_target_time is not None
+            and (time.monotonic() - self._external_arm_target_time)
+            <= self._external_arm_target_timeout_sec
+            and self._external_theta_L is not None
+            and self._external_theta_R is not None
+        )
+        if external_fresh:
+            self._theta_L = self._external_theta_L
+            self._theta_R = self._external_theta_R
 
         if not pen_down_pressed and not pen_up_pressed and not home_pressed:
             auto_fresh = (
