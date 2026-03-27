@@ -308,6 +308,22 @@ def generate_launch_description():
             ]
         ),
 
+        # 11. Additive RViz marker renderer for board trail visualization
+        launch.actions.TimerAction(
+            period=12.0,
+            actions=[
+                Node(
+                    package='wall_climber',
+                    executable='rviz_trail_renderer',
+                    name='rviz_trail_renderer',
+                    output='screen',
+                    parameters=[
+                        {'use_sim_time': True},
+                    ],
+                ),
+            ]
+        ),
+
         # إغلاق نظيف
         launch.actions.RegisterEventHandler(
             event_handler=launch.event_handlers.OnProcessExit(
