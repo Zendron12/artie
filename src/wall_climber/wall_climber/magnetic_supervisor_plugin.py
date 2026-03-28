@@ -39,7 +39,7 @@ class MagneticSupervisorPlugin:
         self._wall_y = float(properties.get('wall_y', '2.415'))
         self._max_dist = float(properties.get('activation_distance', '0.8'))
         self._adhesion = float(properties.get('adhesion_force', '50.0'))
-        self._mass = float(properties.get('robot_mass', '2.3'))
+        self._mass = float(properties.get('robot_mass', '2.5'))
         self._gravity = float(properties.get('gravity', '9.81'))
         self._ag_ratio = float(properties.get('anti_gravity_ratio', '1.05'))
 

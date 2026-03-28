@@ -19,6 +19,7 @@ from std_msgs.msg import Bool, Float64, String
 # this rate. If you change TIMER_HZ, update the declare_parameter defaults below
 # so that the real-time durations stay the same.
 TIMER_HZ = 60.0
+MOVE_TO_STROKE_START_TIMEOUT_SEC = 15.0
 
 IDLE = 'IDLE'
 MOVE_TO_STROKE_START = 'MOVE_TO_STROKE_START'
@@ -138,7 +139,9 @@ class StrokeExecutor(Node):
         self.declare_parameter('pen_clear_gap', 0.004)
         self.declare_parameter('pen_lift_timeout_sec', 1.5)
         # More-negative pen targets mean deeper physical insertion toward the board.
+        # pen_down_min_pos is the shallower contact/down target, closer to zero.
         self.declare_parameter('pen_down_min_pos', -0.010)
+        # pen_down_max_pos is the deeper numeric lower clamp bound.
         self.declare_parameter('pen_down_max_pos', -0.030)
 
         self.declare_parameter('publish_zero_on_stop', True)
@@ -177,6 +180,7 @@ class StrokeExecutor(Node):
         self._probe_retries = 0
         self._pen_lift_state_start_sec = None
         self._next_state_after_pen_up = None
+        self._move_to_stroke_start_started_sec = None
         self._draw_segment_cycles = 0
         self._post_corner_draw_delay_cycles = 0
         self._debug_tick_counter = 0
@@ -542,6 +546,10 @@ class StrokeExecutor(Node):
             f'entered {new_state} '
             f'(primitive={self._primitive_index}, segment={self._segment_index})'
         )
+        if new_state == MOVE_TO_STROKE_START and previous_state != MOVE_TO_STROKE_START:
+            self._move_to_stroke_start_started_sec = self._now_sec()
+        elif previous_state == MOVE_TO_STROKE_START and new_state != MOVE_TO_STROKE_START:
+            self._move_to_stroke_start_started_sec = None
         if new_state == PEN_PROBE:
             self._probe_cycle_counter = 0
         if new_state == PEN_SETTLE:
@@ -573,6 +581,7 @@ class StrokeExecutor(Node):
         self._probe_retries = 0
         self._pen_lift_state_start_sec = None
         self._next_state_after_pen_up = None
+        self._move_to_stroke_start_started_sec = None
         self._draw_segment_cycles = 0
         self._post_corner_draw_delay_cycles = 0
         self._drawing_active = False
@@ -1204,6 +1213,16 @@ class StrokeExecutor(Node):
         start_point, _ = self._current_segment_points()
         if start_point is None:
             self._set_state(ADVANCE_STROKE)
+            return
+        if self._move_to_stroke_start_started_sec is None:
+            self._move_to_stroke_start_started_sec = self._now_sec()
+        if (
+            self._now_sec() - self._move_to_stroke_start_started_sec
+        ) > MOVE_TO_STROKE_START_TIMEOUT_SEC:
+            self._fail_execution(
+                'MOVE_TO_STROKE_START timed out before the robot reached the '
+                'stroke start pose; stopping safely.'
+            )
             return
         self._publish_pen(self._tick_params.pen_up_pos)
         self._publish_drawing_active(False)

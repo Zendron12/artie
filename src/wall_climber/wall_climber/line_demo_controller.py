@@ -101,6 +101,8 @@ class LineDemoController(Node):
         # FSM
         self._state = IDLE
         self._enabled_last = False
+        self._stroke_executor_status = None
+        self._suppressed_by_stroke_executor = False
 
         self._x_start = None
         self._x_end = None
@@ -136,6 +138,12 @@ class LineDemoController(Node):
         )
         self.create_subscription(
             Float64, '/wall_climber/pen_gap', self._pen_gap_cb, 10
+        )
+        self.create_subscription(
+            String,
+            '/wall_climber/stroke_executor_status',
+            self._stroke_executor_status_cb,
+            10,
         )
 
         self._cmd_pub = self.create_publisher(Twist, '/wall_climber/cmd_vel_auto', 10)
@@ -176,6 +184,9 @@ class LineDemoController(Node):
     def _pen_gap_cb(self, msg):
         self._pen_gap = float(msg.data)
         self._pen_gap_stamp = self.get_clock().now()
+
+    def _stroke_executor_status_cb(self, msg):
+        self._stroke_executor_status = str(msg.data).strip()
 
     def _publish_pen(self, value):
         m = Float64()
@@ -231,14 +242,6 @@ class LineDemoController(Node):
 
     def _effective_contact(self, timeout_sec):
         return self._pen_contact_fresh(timeout_sec) and self._pen_contact
-
-    def _gap_contact_good(self, timeout_sec):
-        if not self._pen_gap_fresh(timeout_sec):
-            return False
-        g = self._pen_gap
-        g_min = float(self.get_parameter('contact_gap_min').value)
-        g_max = float(self.get_parameter('contact_gap_max').value)
-        return g_min <= g <= g_max
 
     def _reset_demo(self):
         self._state = IDLE
@@ -464,7 +467,11 @@ class LineDemoController(Node):
         contact_required = bool(self.get_parameter('contact_required_for_drawing').value)
 
         if not enabled:
-            if self._enabled_last and publish_zero_on_stop:
+            if (
+                self._enabled_last
+                and publish_zero_on_stop
+                and not self._suppressed_by_stroke_executor
+            ):
                 self._publish_zero_twist()
                 self._publish_pen(pen_up_pos)
             self._reset_demo()
@@ -473,7 +480,27 @@ class LineDemoController(Node):
 
         if enabled and not self._enabled_last:
             self._reset_demo()
+            self._suppressed_by_stroke_executor = False
             self.get_logger().info('enabled=true, waiting for board/pose then starting demo.')
+
+        if self._stroke_executor_status == 'running':
+            if not self._suppressed_by_stroke_executor:
+                demo_was_active = self._state not in (IDLE, DONE)
+                if demo_was_active:
+                    self._publish_zero_twist()
+                    self._publish_pen(pen_up_pos)
+                self._reset_demo()
+                self._suppressed_by_stroke_executor = True
+                self.get_logger().warn(
+                    'stroke_executor_status=running; suppressing line_demo_controller '
+                    'until it is disabled and re-enabled.'
+                )
+            self._enabled_last = True
+            return
+
+        if self._suppressed_by_stroke_executor:
+            self._enabled_last = True
+            return
 
         if self._board is None or not self._pose_fresh(pose_timeout_sec):
             self._publish_zero_twist()
