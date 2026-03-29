@@ -41,6 +41,7 @@ setup(
             'pose_correction_controller = wall_climber.pose_correction_controller:main',
             'line_demo_controller = wall_climber.line_demo_controller:main',
             'stroke_executor = wall_climber.stroke_executor:main',
+            'arm_pose_controller = wall_climber.arm_pose_controller:main',
         ],
     },
 )

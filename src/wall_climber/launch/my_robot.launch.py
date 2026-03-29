@@ -308,6 +308,32 @@ def generate_launch_description():
             ]
         ),
 
+        # 11. Arm point-to-point pose controller
+        #     (/wall_climber/arm_pose_target -> /wall_climber/arm_joint_targets)
+        launch.actions.TimerAction(
+            period=12.0,
+            actions=[
+                Node(
+                    package='wall_climber',
+                    executable='arm_pose_controller',
+                    name='arm_pose_controller',
+                    output='screen',
+                    parameters=[
+                        {'enabled': False},
+                        {'pose_timeout_sec': 0.5},
+                        {'pen_pose_timeout_sec': 0.5},
+                        {'pen_up_pos': 0.018},
+                        {'target_reached_tol': 0.010},
+                        {'ik_verify_tol': 0.002},
+                        {'local_x_min': -0.09},
+                        {'local_x_max': 0.09},
+                        {'local_y_min': 0.22},
+                        {'local_y_max': 0.32},
+                    ],
+                ),
+            ]
+        ),
+
         # إغلاق نظيف
         launch.actions.RegisterEventHandler(
             event_handler=launch.event_handlers.OnProcessExit(
