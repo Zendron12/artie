@@ -39,6 +39,8 @@ class ControllerParams:
 class ActiveGoal:
     board_x: float
     board_y: float
+    body_x: float
+    body_y: float
     local_x: float
     local_y: float
     theta_l: float
@@ -193,6 +195,7 @@ class ArmPoseController(Node):
         self.get_logger().info(
             'Accepted arm pose target '
             f'board=({goal.board_x:.4f}, {goal.board_y:.4f}) '
+            f'body_local=({goal.body_x:.4f}, {goal.body_y:.4f}) '
             f'local=({goal.local_x:.4f}, {goal.local_y:.4f}) '
             f'shoulders=({goal.theta_l:.4f}, {goal.theta_r:.4f})'
         )
@@ -244,16 +247,21 @@ class ArmPoseController(Node):
         self._set_status(self._STATUS_ERROR)
         self.get_logger().warn(reason)
 
-    def _board_to_arm_local(self, board_x: float, board_y: float) -> tuple[float, float]:
+    def _board_to_arm_local(
+        self, board_x: float, board_y: float
+    ) -> tuple[float, float, float, float]:
         assert self._pose is not None
         dx = board_x - float(self._pose.x)
-        dy = board_y - float(self._pose.y)
+        # board +y is down, while body/arm local +y is up toward the arm workspace.
+        # Only the board-y sign is inverted here; the rotation stays consistent with
+        # robot_pose_board.theta = atan2(board_down, board_right).
+        dy_up = float(self._pose.y) - board_y
         theta = float(self._pose.theta)
         cos_theta = math.cos(theta)
         sin_theta = math.sin(theta)
-        body_x = cos_theta * dx + sin_theta * dy
-        body_y = -sin_theta * dx + cos_theta * dy
-        return body_x, body_y - self._ARM_ANCHOR_Y
+        body_x = cos_theta * dx - sin_theta * dy_up
+        body_y = sin_theta * dx + cos_theta * dy_up
+        return body_x, body_y, body_x, body_y - self._ARM_ANCHOR_Y
 
     def _inside_local_workspace(
         self, local_x: float, local_y: float, params: ControllerParams
@@ -405,16 +413,20 @@ class ArmPoseController(Node):
     def _build_goal(
         self, board_x: float, board_y: float, params: ControllerParams
     ) -> ActiveGoal | None:
-        local_x, local_y = self._board_to_arm_local(board_x, board_y)
+        body_x, body_y, local_x, local_y = self._board_to_arm_local(board_x, board_y)
         if not self._inside_local_workspace(local_x, local_y, params):
             self._enter_error(
-                'Arm pose target rejected: outside conservative local workspace.',
+                'Arm pose target rejected: outside conservative local workspace. '
+                f'board=({board_x:.4f}, {board_y:.4f}) '
+                f'local=({local_x:.4f}, {local_y:.4f})',
                 params,
             )
             return None
         if not self._inside_two_link_bounds(local_x, local_y):
             self._enter_error(
-                'Arm pose target rejected: outside arm reach bounds.',
+                'Arm pose target rejected: outside arm reach bounds. '
+                f'board=({board_x:.4f}, {board_y:.4f}) '
+                f'local=({local_x:.4f}, {local_y:.4f})',
                 params,
             )
             return None
@@ -430,6 +442,8 @@ class ArmPoseController(Node):
         return ActiveGoal(
             board_x=board_x,
             board_y=board_y,
+            body_x=body_x,
+            body_y=body_y,
             local_x=local_x,
             local_y=local_y,
             theta_l=pair[0],
