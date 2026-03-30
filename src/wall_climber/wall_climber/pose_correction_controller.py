@@ -1,4 +1,9 @@
-"""Pose-based drift correction controller for horizontal board motion."""
+"""Pose-based drift correction controller for horizontal body motion.
+
+This node publishes corrective body motion on /wall_climber/cmd_vel_auto
+to hold a target board row and heading while the robot translates
+horizontally. It does not manage pen probing or stroke execution.
+"""
 
 import math
 

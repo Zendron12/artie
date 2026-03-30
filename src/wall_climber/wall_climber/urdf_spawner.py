@@ -1,3 +1,10 @@
+"""Helper node that requests URDF robot spawning from Ros2Supervisor.
+
+This node packages a robot description and spawn pose into a
+webots_ros2_msgs/SpawnUrdfRobot request and waits for the supervisor
+service to become available before sending it.
+"""
+
 import rclpy
 from rclpy.node import Node
 from webots_ros2_msgs.srv import SpawnUrdfRobot

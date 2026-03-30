@@ -1,4 +1,9 @@
-"""Point-to-point board-frame arm pose controller."""
+"""Point-to-point board-frame arm pose controller.
+
+This node accepts a single board-frame target point, converts it into
+the pantograph arm's local workspace, and publishes shoulder targets on
+/wall_climber/arm_joint_targets while keeping the pen safely raised.
+"""
 
 from dataclasses import dataclass
 import math

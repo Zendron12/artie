@@ -1,20 +1,9 @@
-"""Magnetic adhesion supervisor plugin  +  pen trail drawing.
+"""Webots supervisor plugin for adhesion, board state, and pen contact.
 
-Runs on an invisible Supervisor Robot defined in wall_world.wbt.
-Every simulation step it:
-  1. Locates the wall_climber robot (by scanning root children)
-  2. Reads its world-frame position
-  3. Applies:
-       - adhesion  force  (+Y  toward the whiteboard surface)
-       - anti-gravity     (+Z  counteract gravity)
-  4. Finds the pen_holder Solid inside the wall_climber
-  5. When the marker tip is close to the whiteboard, drops small
-     black dots to form a visible writing trail.
-
-Because this controller has  supervisor TRUE  it can use
-getPosition() / addForce() / importMFNodeFromString() on any
-node in the scene — something the URDF-spawned wall_climber
-(supervisor FALSE) cannot do itself.
+This plugin applies the magnetic support forces required for climbing,
+publishes board-frame robot and pen state, and manages the visible pen
+trail in simulation. It runs as the supervisor-side helper for the
+wall_climber robot.
 """
 
 import json

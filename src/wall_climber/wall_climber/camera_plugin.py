@@ -1,13 +1,9 @@
-"""Vision camera plugin — compressed camera only, no ArUco.
+"""Webots camera plugin for the external vision robot.
 
-Runs inside the vision_camera Webots Robot controller. Every step():
-  1. Grabs the BGRA frame from the Webots camera device via getImage()
-  2. Wraps the frame with np.frombuffer (zero-copy)
-  3. JPEG-encodes the BGR image
-  4. Publishes sensor_msgs/CompressedImage on
-     /vision_camera/image_raw/compressed
-
-No ArUco detection or pose publishing is performed.
+This plugin reads frames from the simulated camera, JPEG-encodes them,
+and publishes sensor_msgs/CompressedImage on
+/vision_camera/image_raw/compressed. It does not perform marker
+detection, pose estimation, or higher-level vision processing.
 """
 
 import numpy as np

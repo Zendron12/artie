@@ -1,3 +1,17 @@
+"""Main system launch file for the wall climber Webots simulation.
+
+This launch description brings up:
+- the Webots world and ROS 2 supervisor
+- the camera robot and its driver
+- the wall-climbing robot and its driver
+- the magnetic supervisor helper robot
+- the web UI bridge/services
+- higher-level motion and drawing controllers
+
+The launch order is intentionally staged with TimerAction delays so the
+simulation, supervisor, and spawned robots come up in a predictable order.
+"""
+
 import os
 import launch
 from launch import LaunchDescription
@@ -15,25 +29,30 @@ def generate_launch_description():
     pkg_dir = get_package_share_directory(package_name)
     webots_prefix = LaunchConfiguration('webots_prefix')
 
-    # 1. تحديد المسارات
+    # ------------------------------------------------------------------
+    # Resolve package-local resources
+    # ------------------------------------------------------------------
     world_path = os.path.join(pkg_dir, "worlds", "wall_world.wbt")
     camera_xacro_path = os.path.join(pkg_dir, "urdf", "vision_camera.xacro")
     climber_xacro_path = os.path.join(pkg_dir, "urdf", "my_robot.urdf.xacro")
     supervisor_xacro_path = os.path.join(pkg_dir, "urdf", "magnetic_supervisor.urdf.xacro")
 
-    # 2. تحويل ملفات Xacro إلى نصوص (XML)
-    # وصف الكاميرا
+    # ------------------------------------------------------------------
+    # Expand Xacro descriptions into XML strings for robot_state_publisher
+    # and for the generic URDF spawner nodes.
+    # ------------------------------------------------------------------
     camera_description = ParameterValue(
         Command(['xacro ', camera_xacro_path]),
         value_type=str
     )
-    # وصف الروبوت المتسلق
     climber_description = ParameterValue(
         Command(['xacro ', climber_xacro_path]),
         value_type=str
     )
 
-    # 3. تشغيل Webots
+    # ------------------------------------------------------------------
+    # Start the Webots world and enable the ROS 2 supervisor bridge.
+    # ------------------------------------------------------------------
     webots = WebotsLauncher(
         world=world_path,
         mode='realtime',
@@ -41,19 +60,20 @@ def generate_launch_description():
         prefix=webots_prefix,
     )
 
-    # ==========================================================
-    #   الجزء الأول: الكاميرا (كما هي في الكود الشغال معك)
-    # ==========================================================
+    # ------------------------------------------------------------------
+    # Camera robot pipeline
+    # ------------------------------------------------------------------
 
-    # ناشر حالة الكاميرا (مع Namespace عشان نفصلها عن الروبوت الثاني)
+    # Publish the camera URDF under its own namespace to keep TF and topics
+    # separated from the wall-climbing robot.
     camera_rsp = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
-        namespace='vision_camera',  # ضروري جداً للفصل
+        namespace='vision_camera',
         parameters=[{'robot_description': camera_description}]
     )
 
-    # سباونر الكاميرا (ينزلها في مكانها الأصلي)
+    # Spawn the camera robot at its fixed observation position.
     camera_spawner = Node(
         package=package_name,
         executable='urdf_spawner',
@@ -62,12 +82,12 @@ def generate_launch_description():
         parameters=[
             {'robot_description': camera_description},
             {'robot_name': 'vision_camera'},
-            {'spawn_translation': '0 -3.5 0'},  # مكان الكاميرا
+            {'spawn_translation': '0 -3.5 0'},
             {'spawn_rotation': '0 0 1 1.57'}
         ]
     )
 
-    # درايفر الكاميرا
+    # Webots controller for the spawned camera robot.
     vision_camera_driver = WebotsController(
         robot_name='vision_camera',
         parameters=[
@@ -77,19 +97,19 @@ def generate_launch_description():
         respawn=True
     )
 
-    # ==========================================================
-    #   الجزء الثاني: الروبوت المتسلق (الإضافة الجديدة)
-    # ==========================================================
+    # ------------------------------------------------------------------
+    # Wall-climbing robot pipeline
+    # ------------------------------------------------------------------
 
-    # ناشر حالة المتسلق
+    # Publish the wall climber URDF in its own namespace.
     climber_rsp = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
-        namespace='wall_climber',  # ضروري جداً للفصل
+        namespace='wall_climber',
         parameters=[{'robot_description': climber_description}]
     )
 
-    # سباونر المتسلق (ينزله على اللوح)
+    # Spawn the climber on the whiteboard at the calibrated start pose.
     climber_spawner = Node(
         package=package_name,
         executable='urdf_spawner',
@@ -98,13 +118,13 @@ def generate_launch_description():
         parameters=[
             {'robot_description': climber_description},
             {'robot_name': 'wall_climber'},
-            # الإحداثيات الدقيقة للوح
             {'spawn_translation': '0 2.405 1.80'},
             {'spawn_rotation': '1 0 0 1.57'}
         ]
     )
 
-    # درايفر المتسلق (عشان يتحرك لبعدين)
+    # Webots controller for the climber, including drive and temporary
+    # keyboard/manual testing plugins.
     wall_climber_driver = WebotsController(
         robot_name='wall_climber',
         parameters=[
@@ -114,9 +134,9 @@ def generate_launch_description():
         respawn=True
     )
 
-    # ==========================================================
-    #   الجزء الثالث: Supervisor للمغناطيس (روبوت غير مرئي)
-    # ==========================================================
+    # ------------------------------------------------------------------
+    # Magnetic supervisor helper robot
+    # ------------------------------------------------------------------
     magnetic_supervisor_driver = WebotsController(
         robot_name='magnetic_supervisor',
         parameters=[
@@ -126,9 +146,15 @@ def generate_launch_description():
         respawn=True
     )
 
-    # ==========================================================
-    #   تجميع الكل وتشغيلهم بتسلسل زمني
-    # ==========================================================
+    # ------------------------------------------------------------------
+    # Launch sequence
+    # ------------------------------------------------------------------
+    # The ordered TimerAction blocks below avoid race conditions between:
+    # - Webots startup
+    # - supervisor availability
+    # - robot spawning
+    # - controller attachment
+    # - higher-level ROS nodes that depend on robot/board state
     return LaunchDescription([
         DeclareLaunchArgument(
             'webots_prefix',
@@ -141,36 +167,36 @@ def generate_launch_description():
         webots,
         webots._supervisor,
 
-        # 1. تشغيل الـ State Publishers للروبوتين
+        # 1. Start both robot_state_publisher instances.
         camera_rsp,
         climber_rsp,
 
-        # 2. إنزال الكاميرا أولاً ثم تشغيل درايفرها
+        # 2. Spawn the camera first, then attach its Webots driver.
         camera_spawner,
         launch.actions.TimerAction(
             period=2.0,
             actions=[vision_camera_driver]
         ),
 
-        # 3. تشغيل درايفر المغناطيس (الروبوت موجود في .wbt)
+        # 3. Start the magnetic supervisor helper already present in the world.
         launch.actions.TimerAction(
             period=1.0,
             actions=[magnetic_supervisor_driver]
         ),
 
-        # 4. بعد 5 ثواني.. إنزال الروبوت المتسلق
+        # 4. Spawn the wall climber after Webots and the supervisor are ready.
         launch.actions.TimerAction(
             period=5.0,
             actions=[climber_spawner]
         ),
 
-        # 5. تشغيل درايفر المتسلق بعد السبون (بلغن الكيبورد + السويرف)
+        # 5. Attach the climber Webots driver after the robot exists.
         launch.actions.TimerAction(
             period=7.0,
             actions=[wall_climber_driver]
         ),
 
-        # 6. rosbridge WebSocket server (for web UI)
+        # 6. Start rosbridge for the browser-based UI and tools.
         launch.actions.TimerAction(
             period=2.0,
             actions=[
@@ -183,7 +209,7 @@ def generate_launch_description():
             ]
         ),
 
-        # 7. Web UI HTTP server (serves HTML on port 8080)
+        # 7. Serve the local web UI on port 8080.
         launch.actions.TimerAction(
             period=8.0,
             actions=[
@@ -196,7 +222,7 @@ def generate_launch_description():
             ]
         ),
 
-        # 8. Pose-based drift correction publisher (/wall_climber/cmd_vel_auto)
+        # 8. Optional pose-hold controller for body drift correction.
         launch.actions.TimerAction(
             period=9.0,
             actions=[
@@ -221,8 +247,8 @@ def generate_launch_description():
             ]
         ),
 
-        # 9. Two-line board-aware demo controller
-        #    (/wall_climber/cmd_vel_auto + /wall_climber/pen_target)
+        # 9. Optional two-line board-aware demo controller.
+        #    Publishes body motion and pen targets for the legacy demo path.
         launch.actions.TimerAction(
             period=10.0,
             actions=[
@@ -264,8 +290,7 @@ def generate_launch_description():
             ]
         ),
 
-        # 10. Generic stroke executor
-        #     (/wall_climber/stroke_plan -> /wall_climber/cmd_vel_auto + /wall_climber/pen_target)
+        # 10. Generic JSON stroke executor for body-based drawing.
         launch.actions.TimerAction(
             period=11.0,
             actions=[
@@ -308,8 +333,8 @@ def generate_launch_description():
             ]
         ),
 
-        # 11. Arm point-to-point pose controller
-        #     (/wall_climber/arm_pose_target -> /wall_climber/arm_joint_targets)
+        # 11. Arm point-to-point pose controller.
+        #     This phase drives only the pantograph arm and keeps the pen up.
         launch.actions.TimerAction(
             period=12.0,
             actions=[
@@ -334,7 +359,7 @@ def generate_launch_description():
             ]
         ),
 
-        # إغلاق نظيف
+        # Clean shutdown: when Webots exits, bring down the whole launch tree.
         launch.actions.RegisterEventHandler(
             event_handler=launch.event_handlers.OnProcessExit(
                 target_action=webots,

@@ -1,4 +1,10 @@
-"""Board-aware two-line writing demo controller (contact-aware, pen-referenced)."""
+"""Board-aware two-line drawing demo controller.
+
+This node generates a fixed two-line writing pattern on the board using
+body motion on /wall_climber/cmd_vel_auto and pen commands on
+/wall_climber/pen_target. It is a structured demonstration path, not a
+generic stroke planner.
+"""
 
 import json
 import math

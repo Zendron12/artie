@@ -1,10 +1,9 @@
-"""Temporary keyboard/manual input + pantograph arm controller.
+"""Temporary manual drive and arm test plugin for Webots.
 
-This plugin is intentionally temporary for testing:
-- DRIVE: publishes manual Twist overrides to /wall_climber/cmd_vel_manual
-- ARM: keeps direct joint control for the pantograph exactly as before
-
-Permanent low-level drive execution lives in swerve_drive_plugin.py.
+This plugin publishes keyboard-based manual drive commands and provides
+direct local testing hooks for the pantograph arm and pen. It also
+hosts the current ROS shoulder-target bridge used by the early arm
+control phases.
 """
 
 import math

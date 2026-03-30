@@ -1,8 +1,8 @@
-"""Tiny HTTP server that serves the web UI on port 8080.
+"""ROS-managed HTTP server for the local wall_climber web UI.
 
-Launched as a ROS 2 node so it shows up in the node graph and shuts
-down cleanly with the rest of the system.  Also opens the browser
-automatically on start.
+This node serves the static web frontend on port 8080 and shuts down
+with the rest of the ROS launch system. It optionally opens the UI in a
+browser as a best-effort convenience.
 """
 
 import os
