@@ -1,9 +1,10 @@
-"""Temporary manual drive and arm test plugin for Webots.
+"""Temporary keyboard/manual input + pantograph arm controller.
 
-This plugin publishes keyboard-based manual drive commands and provides
-direct local testing hooks for the pantograph arm and pen. It also
-hosts the current ROS shoulder-target bridge used by the early arm
-control phases.
+This plugin is intentionally temporary for testing:
+- DRIVE: publishes manual Twist overrides to /wall_climber/cmd_vel_manual
+- ARM: keeps direct joint control for the pantograph exactly as before
+
+Permanent low-level drive execution lives in swerve_drive_plugin.py.
 """
 
 import math
@@ -11,7 +12,6 @@ import time
 
 import rclpy
 from geometry_msgs.msg import Twist
-from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Float64
 
 
@@ -27,10 +27,6 @@ class SwerveKeyboardPlugin:
     _UPPER_LEN = 0.14  # upper arm length
     _FORE_LEN = 0.18   # forearm length
     _FORE_ANG = 0.281  # fixed forearm offset angle (rad)
-    _LEFT_SHOULDER_NAME = 'left_shoulder_joint'
-    _RIGHT_SHOULDER_NAME = 'right_shoulder_joint'
-    _EXTERNAL_ARM_TIMEOUT_SEC = 0.25
-    _INVALID_ARM_TARGET_LOG_PERIOD_SEC = 2.0
 
     def init(self, webots_node, properties):
         self._robot = webots_node.robot
@@ -97,12 +93,6 @@ class SwerveKeyboardPlugin:
         self._auto_pen_target_time = time.monotonic()
         self._pen_pos = self._auto_pen_up_pos
         self._pen_contact = False
-        self._pen_gap = float('nan')
-        self._external_theta_L = None
-        self._external_theta_R = None
-        self._external_arm_target_time = None
-        self._arm_control_source = 'manual'
-        self._last_invalid_arm_target_log_time = -1.0e9
 
         # ---- ROS 2 manual-drive publisher ----------------------------
         if not rclpy.ok():
@@ -117,15 +107,6 @@ class SwerveKeyboardPlugin:
         self._pen_contact_sub = self._ros_node.create_subscription(
             Bool, '/wall_climber/pen_contact', self._pen_contact_cb, 1
         )
-        self._pen_gap_sub = self._ros_node.create_subscription(
-            Float64, '/wall_climber/pen_gap', self._pen_gap_cb, 1
-        )
-        self._arm_target_sub = self._ros_node.create_subscription(
-            JointState,
-            '/wall_climber/arm_joint_targets',
-            self._arm_joint_targets_cb,
-            1,
-        )
         self._last_drive_nonzero = False
 
         n_a = sum(1 for m in self._arm_motors if m)
@@ -133,7 +114,6 @@ class SwerveKeyboardPlugin:
         print('[SwerveKB] DRIVE: W/Up S/Down A/Left D/Right  Q/E=rotate  SPACE=stop')
         print('[SwerveKB] DRIVE: publishes /wall_climber/cmd_vel_manual only')
         print('[SwerveKB] ARM:   1/2=L-shoulder 3/4=R-shoulder 5/6=pen-dn/up H=home')
-        print('[SwerveKB] ARM:   external ROS shoulders on /wall_climber/arm_joint_targets')
         print('[SwerveKB] PEN:   auto target from /wall_climber/pen_target when 5/6 idle')
         print('[SwerveKB] PEN:   manual pen position stays latched without fresh auto target')
         print(
@@ -243,78 +223,6 @@ class SwerveKeyboardPlugin:
     def _pen_contact_cb(self, msg):
         self._pen_contact = bool(msg.data)
 
-    def _pen_gap_cb(self, msg):
-        self._pen_gap = float(msg.data)
-
-    def _warn_invalid_arm_target(self, text):
-        now = time.monotonic()
-        if now - self._last_invalid_arm_target_log_time >= self._INVALID_ARM_TARGET_LOG_PERIOD_SEC:
-            self._ros_node.get_logger().warn(text)
-            self._last_invalid_arm_target_log_time = now
-
-    def _arm_joint_targets_cb(self, msg):
-        targets = {}
-        for index, name in enumerate(msg.name):
-            if name not in (self._LEFT_SHOULDER_NAME, self._RIGHT_SHOULDER_NAME):
-                continue
-            if index >= len(msg.position):
-                self._warn_invalid_arm_target(
-                    'Ignoring malformed /wall_climber/arm_joint_targets: '
-                    'required shoulder positions are missing.'
-                )
-                return
-            value = float(msg.position[index])
-            if not math.isfinite(value):
-                self._warn_invalid_arm_target(
-                    'Ignoring malformed /wall_climber/arm_joint_targets: '
-                    'shoulder targets must be finite.'
-                )
-                return
-            targets[name] = value
-
-        if (
-            self._LEFT_SHOULDER_NAME not in targets
-            or self._RIGHT_SHOULDER_NAME not in targets
-        ):
-            self._warn_invalid_arm_target(
-                'Ignoring incomplete /wall_climber/arm_joint_targets: '
-                'both left_shoulder_joint and right_shoulder_joint are required.'
-            )
-            return
-
-        self._external_theta_L = float(targets[self._LEFT_SHOULDER_NAME])
-        self._external_theta_R = float(targets[self._RIGHT_SHOULDER_NAME])
-        self._external_arm_target_time = time.monotonic()
-
-    def _external_arm_targets_fresh(self):
-        if (
-            self._external_arm_target_time is None
-            or self._external_theta_L is None
-            or self._external_theta_R is None
-        ):
-            return False
-        return (
-            time.monotonic() - self._external_arm_target_time
-        ) <= self._EXTERNAL_ARM_TIMEOUT_SEC
-
-    def _select_active_shoulders(self):
-        if self._external_arm_targets_fresh():
-            if self._arm_control_source != 'external':
-                self._ros_node.get_logger().info(
-                    'External arm target stream became active.'
-                )
-                self._arm_control_source = 'external'
-            return self._external_theta_L, self._external_theta_R
-
-        if self._arm_control_source == 'external':
-            self._ros_node.get_logger().info(
-                'External arm target stream timed out.'
-            )
-            self._ros_node.get_logger().info('Manual fallback resumed.')
-            self._arm_control_source = 'manual'
-
-        return self._theta_L, self._theta_R
-
     # ------------------------------------------------------------------
     def step(self):
         rclpy.spin_once(self._ros_node, timeout_sec=0)
@@ -392,17 +300,13 @@ class SwerveKeyboardPlugin:
         self._theta_R = max(self._shoulder_min, min(self._shoulder_max, self._theta_R))
         self._pen_pos = max(self._pen_min_pos, min(self._pen_max_pos, self._pen_pos))
 
-        active_theta_L, active_theta_R = self._select_active_shoulders()
-        active_theta_L = max(self._shoulder_min, min(self._shoulder_max, active_theta_L))
-        active_theta_R = max(self._shoulder_min, min(self._shoulder_max, active_theta_R))
-
         # Solve closed-loop constraint for elbows
-        result = self._solve_elbows(active_theta_L, active_theta_R)
+        result = self._solve_elbows(self._theta_L, self._theta_R)
         if result is not None:
             phi_L, phi_R = result
             phi_L = max(self._elbow_min, min(self._elbow_max, phi_L))
             phi_R = max(self._elbow_min, min(self._elbow_max, phi_R))
-            targets = [active_theta_L, phi_L, active_theta_R, phi_R, self._pen_pos]
+            targets = [self._theta_L, phi_L, self._theta_R, phi_R, self._pen_pos]
         else:
             # Unreachable — don't move (hold previous position)
             targets = None

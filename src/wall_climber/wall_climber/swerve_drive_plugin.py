@@ -1,8 +1,14 @@
-"""Low-level swerve drive executor and command arbiter.
+"""Permanent low-level swerve drive executor plugin.
 
-This plugin owns the steering and wheel actuators in Webots and selects
-between manual, web, and autonomous Twist command sources. It does not
-implement high-level planning, stroke execution, or arm control.
+This plugin owns drive motor actuation and arbitrates drive command sources:
+  1) /wall_climber/cmd_vel_manual (temporary keyboard/manual override)
+  2) /cmd_vel                    (existing web UI)
+  3) /wall_climber/cmd_vel_auto  (autonomous correction)
+
+Twist convention (unchanged):
+  linear.x -> left/right on wall
+  linear.y -> up/down on wall
+  angular.z -> robot yaw
 """
 
 import math

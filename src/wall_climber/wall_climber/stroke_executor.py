@@ -1,9 +1,7 @@
-"""Board-frame stroke executor for body-based writing.
+"""Generic board-aware stroke executor for Artie.
 
-This node accepts validated JSON stroke plans, drives body motion along
-axis-aligned board segments, and manages pen probe, settle, and lift
-behavior for drawing. It is the main generic body-writer execution
-path.
+This node executes JSON stroke plans in board coordinates using the same
+contact-aware drawing behavior proven in line_demo_controller.
 """
 
 from dataclasses import dataclass
@@ -22,12 +20,6 @@ from std_msgs.msg import Bool, Float64, String
 # so that the real-time durations stay the same.
 TIMER_HZ = 60.0
 MOVE_TO_STROKE_START_TIMEOUT_SEC = 15.0
-MOVE_TO_START_DEBUG_PERIOD_SEC = 0.75
-MOVE_TO_START_MIN_FORWARD_CMD = 0.03
-MOVE_TO_START_MIN_LATERAL_CMD = 0.02
-MOVE_TO_START_MIN_ANGULAR_CMD = 0.03
-MOVE_TO_START_FORWARD_GATE_Y_ERR = 0.03
-MOVE_TO_START_FORWARD_GATE_THETA_ERR = 0.08
 
 IDLE = 'IDLE'
 MOVE_TO_STROKE_START = 'MOVE_TO_STROKE_START'
@@ -101,25 +93,9 @@ class TickParams:
 
 
 class StrokeExecutor(Node):
-    """Execute validated board-frame stroke plans with a finite-state machine.
-
-    The executor owns:
-    - plan intake and validation
-    - body motion commands on /wall_climber/cmd_vel_auto
-    - pen lift/probe/settle behavior on /wall_climber/pen_target
-    - drawing-state signaling for the magnetic supervisor
-
-    This node is intentionally conservative: it accepts only board-frame,
-    axis-aligned v1 plans and stops safely whenever required runtime data
-    becomes stale.
-    """
-
     def __init__(self):
         super().__init__('stroke_executor')
 
-        # ------------------------------------------------------------------
-        # Runtime-tunable control, contact, and timing parameters
-        # ------------------------------------------------------------------
         self.declare_parameter('enabled', False)
         self.declare_parameter('draw_speed', 0.10)
         self.declare_parameter('reposition_speed', 0.80)
@@ -172,9 +148,6 @@ class StrokeExecutor(Node):
         self.declare_parameter('pose_timeout_sec', 0.5)
         self.declare_parameter('publish_debug_telemetry', False)
 
-        # ------------------------------------------------------------------
-        # Latest board/body/pen feedback from the supervisor
-        # ------------------------------------------------------------------
         self._pose = None
         self._pose_stamp = None
         self._pen_x = None
@@ -186,9 +159,6 @@ class StrokeExecutor(Node):
         self._pen_contact_stamp = None
         self._pen_gap_stamp = None
 
-        # ------------------------------------------------------------------
-        # FSM state, high-level execution status, and active plan bookkeeping
-        # ------------------------------------------------------------------
         self._state = IDLE
         self._enabled_last = False
         self._status = None
@@ -200,9 +170,6 @@ class StrokeExecutor(Node):
         self._primitive_index = 0
         self._segment_index = 0
 
-        # ------------------------------------------------------------------
-        # Per-segment and per-probe transient execution state
-        # ------------------------------------------------------------------
         self._probe_target = None
         self._probe_cycle_counter = 0
         self._pen_settle_counter = 0
@@ -214,20 +181,12 @@ class StrokeExecutor(Node):
         self._pen_lift_state_start_sec = None
         self._next_state_after_pen_up = None
         self._move_to_stroke_start_started_sec = None
-        self._move_to_start_entry_logged = False
-        self._move_to_start_last_debug_sec = None
-        self._move_to_start_fallback_in_use = False
-        self._move_to_start_fallback_activation_logged = False
-        self._move_to_start_fallback_recovery_logged = False
         self._draw_segment_cycles = 0
         self._post_corner_draw_delay_cycles = 0
         self._debug_tick_counter = 0
         self._debug_transition_reason = None
         self._tick_params = self._read_tick_params()
 
-        # ------------------------------------------------------------------
-        # Public ROS interfaces
-        # ------------------------------------------------------------------
         self.create_subscription(
             String, '/wall_climber/stroke_plan', self._plan_cb, 10
         )
@@ -263,9 +222,6 @@ class StrokeExecutor(Node):
         self._set_status('idle')
         self.get_logger().info('Stroke executor ready (enabled=false).')
 
-    # ------------------------------------------------------------------
-    # Parameter snapshot and external input callbacks
-    # ------------------------------------------------------------------
     def _read_tick_params(self) -> TickParams:
         return TickParams(
             enabled=bool(self.get_parameter('enabled').value),
@@ -371,9 +327,6 @@ class StrokeExecutor(Node):
 
         self._finalize_pending_plan()
 
-    # ------------------------------------------------------------------
-    # Plan normalization, validation, and execution-path construction
-    # ------------------------------------------------------------------
     def _normalize_plan(
         self,
         payload: dict[str, Any],
@@ -561,9 +514,6 @@ class StrokeExecutor(Node):
         self._set_status('error')
         self._set_state(DONE)
 
-    # ------------------------------------------------------------------
-    # Small publication helpers and FSM state bookkeeping
-    # ------------------------------------------------------------------
     def _publish_pen(self, value: float) -> None:
         msg = Float64()
         msg.data = float(value)
@@ -598,18 +548,8 @@ class StrokeExecutor(Node):
         )
         if new_state == MOVE_TO_STROKE_START and previous_state != MOVE_TO_STROKE_START:
             self._move_to_stroke_start_started_sec = self._now_sec()
-            self._move_to_start_entry_logged = False
-            self._move_to_start_last_debug_sec = None
-            self._move_to_start_fallback_in_use = False
-            self._move_to_start_fallback_activation_logged = False
-            self._move_to_start_fallback_recovery_logged = False
         elif previous_state == MOVE_TO_STROKE_START and new_state != MOVE_TO_STROKE_START:
             self._move_to_stroke_start_started_sec = None
-            self._move_to_start_entry_logged = False
-            self._move_to_start_last_debug_sec = None
-            self._move_to_start_fallback_in_use = False
-            self._move_to_start_fallback_activation_logged = False
-            self._move_to_start_fallback_recovery_logged = False
         if new_state == PEN_PROBE:
             self._probe_cycle_counter = 0
         if new_state == PEN_SETTLE:
@@ -642,11 +582,6 @@ class StrokeExecutor(Node):
         self._pen_lift_state_start_sec = None
         self._next_state_after_pen_up = None
         self._move_to_stroke_start_started_sec = None
-        self._move_to_start_entry_logged = False
-        self._move_to_start_last_debug_sec = None
-        self._move_to_start_fallback_in_use = False
-        self._move_to_start_fallback_activation_logged = False
-        self._move_to_start_fallback_recovery_logged = False
         self._draw_segment_cycles = 0
         self._post_corner_draw_delay_cycles = 0
         self._drawing_active = False
@@ -656,9 +591,6 @@ class StrokeExecutor(Node):
     def _now_sec(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
 
-    # ------------------------------------------------------------------
-    # Freshness checks and current-plan accessors
-    # ------------------------------------------------------------------
     def _pose_fresh(self, timeout_sec):
         if self._pose is None or self._pose_stamp is None:
             return False
@@ -760,9 +692,6 @@ class StrokeExecutor(Node):
             return 'horizontal'
         return None
 
-    # ------------------------------------------------------------------
-    # Segment geometry and path-progress helpers
-    # ------------------------------------------------------------------
     def _segment_direction_sign(
         self,
         start_point: tuple[float, float] | None,
@@ -835,9 +764,6 @@ class StrokeExecutor(Node):
             return float(tip_x) - float(start_point[0])
         return 0.0
 
-    # ------------------------------------------------------------------
-    # Motion-command generation
-    # ------------------------------------------------------------------
     def _segment_linear_components(
         self,
         axis: str | None,
@@ -1012,164 +938,6 @@ class StrokeExecutor(Node):
         cmd.linear.x = _clamp(2.0 * x_error, -float(speed_cap), float(speed_cap))
         return cmd
 
-    def _move_to_start_residual(
-        self,
-        target_x: float,
-        target_y: float,
-        target_theta: float,
-    ) -> dict[str, float]:
-        x = float(self._pen_x)
-        y = float(self._pen_y)
-        theta = float(self._pose.theta)
-        x_error = target_x - x
-        y_error = target_y - y
-        theta_error = _wrap_to_pi(target_theta - theta)
-        return {
-            'pen_x': x,
-            'pen_y': y,
-            'target_x': float(target_x),
-            'target_y': float(target_y),
-            'x_error': x_error,
-            'y_error': y_error,
-            'downward_error': -y_error,
-            'theta_error': theta_error,
-        }
-
-    def _move_to_start_log_entry(
-        self,
-        residual: dict[str, float],
-    ) -> None:
-        if self._move_to_start_entry_logged:
-            return
-        self.get_logger().info(
-            'MOVE_TO_STROKE_START begin '
-            f'pen=({residual["pen_x"]:.4f}, {residual["pen_y"]:.4f}) '
-            f'target=({residual["target_x"]:.4f}, {residual["target_y"]:.4f}) '
-            f'error=(x={residual["x_error"]:.4f}, '
-            f'y={residual["y_error"]:.4f}, '
-            f'theta={residual["theta_error"]:.4f})'
-        )
-        self._move_to_start_entry_logged = True
-
-    def _move_to_start_forward_allowed(
-        self,
-        residual: dict[str, float],
-    ) -> bool:
-        return (
-            abs(residual['downward_error']) <= MOVE_TO_START_FORWARD_GATE_Y_ERR
-            and abs(residual['theta_error']) <= MOVE_TO_START_FORWARD_GATE_THETA_ERR
-        )
-
-    def _move_to_start_cmd_needs_fallback(
-        self,
-        cmd: Twist,
-        residual: dict[str, float],
-    ) -> bool:
-        needs_y = abs(residual['y_error']) >= self._tick_params.pos_tol_y
-        needs_theta = abs(residual['theta_error']) >= self._tick_params.theta_tol
-        needs_x = (
-            abs(residual['x_error']) >= self._tick_params.pos_tol_x
-            and self._move_to_start_forward_allowed(residual)
-        )
-        if not (needs_x or needs_y or needs_theta):
-            return False
-        healthy = True
-        if needs_x:
-            healthy = healthy and (
-                abs(float(cmd.linear.x)) >= MOVE_TO_START_MIN_FORWARD_CMD
-            )
-        if needs_y:
-            healthy = healthy and (
-                abs(float(cmd.linear.y)) >= MOVE_TO_START_MIN_LATERAL_CMD
-            )
-        if needs_theta:
-            healthy = healthy and (
-                abs(float(cmd.angular.z)) >= MOVE_TO_START_MIN_ANGULAR_CMD
-            )
-        return not healthy
-
-    def _move_to_start_fallback_cmd(
-        self,
-        residual: dict[str, float],
-        speed_cap: float,
-    ) -> Twist:
-        cmd = Twist()
-        max_lat = self._tick_params.max_lateral_cmd
-        max_ang = self._tick_params.max_angular_cmd
-
-        needs_y = abs(residual['y_error']) >= self._tick_params.pos_tol_y
-        if needs_y:
-            y_cmd = _clamp(
-                self._tick_params.k_y * residual['downward_error'],
-                -max_lat,
-                max_lat,
-            )
-            if abs(y_cmd) < MOVE_TO_START_MIN_LATERAL_CMD:
-                y_cmd = math.copysign(
-                    min(max_lat, MOVE_TO_START_MIN_LATERAL_CMD),
-                    residual['downward_error'],
-                )
-            cmd.linear.y = y_cmd
-
-        needs_theta = abs(residual['theta_error']) >= self._tick_params.theta_tol
-        if needs_theta:
-            ang_cmd = _clamp(
-                self._tick_params.omega_sign
-                * self._tick_params.k_theta
-                * residual['theta_error'],
-                -max_ang,
-                max_ang,
-            )
-            if abs(ang_cmd) < MOVE_TO_START_MIN_ANGULAR_CMD:
-                ang_cmd = math.copysign(
-                    min(max_ang, MOVE_TO_START_MIN_ANGULAR_CMD),
-                    self._tick_params.omega_sign * residual['theta_error'],
-                )
-            cmd.angular.z = ang_cmd
-
-        needs_x = (
-            abs(residual['x_error']) >= self._tick_params.pos_tol_x
-            and self._move_to_start_forward_allowed(residual)
-        )
-        if needs_x:
-            x_cmd = _clamp(2.0 * residual['x_error'], -float(speed_cap), float(speed_cap))
-            if abs(x_cmd) < MOVE_TO_START_MIN_FORWARD_CMD:
-                x_cmd = math.copysign(
-                    min(float(speed_cap), MOVE_TO_START_MIN_FORWARD_CMD),
-                    residual['x_error'],
-                )
-            cmd.linear.x = x_cmd
-
-        return cmd
-
-    def _maybe_log_move_to_start_debug(
-        self,
-        residual: dict[str, float],
-        cmd: Twist,
-        source: str,
-    ) -> None:
-        now_sec = self._now_sec()
-        if (
-            self._move_to_start_last_debug_sec is not None
-            and (now_sec - self._move_to_start_last_debug_sec) < MOVE_TO_START_DEBUG_PERIOD_SEC
-        ):
-            return
-        self.get_logger().info(
-            'MOVE_TO_STROKE_START tracking '
-            f'source={source} '
-            f'pen=({residual["pen_x"]:.4f}, {residual["pen_y"]:.4f}) '
-            f'error=(x={residual["x_error"]:.4f}, '
-            f'y={residual["y_error"]:.4f}, '
-            f'theta={residual["theta_error"]:.4f}) '
-            f'cmd=(x={float(cmd.linear.x):.4f}, '
-            f'y={float(cmd.linear.y):.4f}, '
-            f'z={float(cmd.angular.z):.4f})'
-        )
-        self._move_to_start_last_debug_sec = now_sec
-
-    # ------------------------------------------------------------------
-    # Pen handling and probe/settle behavior
-    # ------------------------------------------------------------------
     def _segment_complete(
         self,
         target_x: float,
@@ -1300,9 +1068,6 @@ class StrokeExecutor(Node):
         # gap-window recovery parameters remain compatibility no-ops.
         return _clamp(target, pen_down_max, pen_up_pos)
 
-    # ------------------------------------------------------------------
-    # Optional debug telemetry
-    # ------------------------------------------------------------------
     def _build_debug_payload(self, transition_reason: str) -> dict[str, Any]:
         start_point, end_point = self._current_segment_points()
         axis = self._segment_axis(start_point, end_point)
@@ -1372,9 +1137,6 @@ class StrokeExecutor(Node):
         self._debug_pub.publish(msg)
         self._debug_transition_reason = None
 
-    # ------------------------------------------------------------------
-    # Safe-stop/error handling and controller availability gates
-    # ------------------------------------------------------------------
     def _fail_execution(self, reason: str) -> None:
         self.get_logger().warn(reason)
         self._publish_zero_twist()
@@ -1443,9 +1205,6 @@ class StrokeExecutor(Node):
         self._publish_zero_twist()
         self._publish_pen(self._tick_params.pen_up_pos)
 
-    # ------------------------------------------------------------------
-    # Per-state FSM handlers
-    # ------------------------------------------------------------------
     def _handle_state_move_to_stroke_start(self) -> None:
         primitive = self._current_primitive()
         if primitive is None:
@@ -1465,12 +1224,15 @@ class StrokeExecutor(Node):
                 'stroke start pose; stopping safely.'
             )
             return
-        residual = self._move_to_start_residual(
+        self._publish_pen(self._tick_params.pen_up_pos)
+        self._publish_drawing_active(False)
+        cmd = self._tracking_cmd(
             start_point[0],
             start_point[1],
             self._tick_params.target_theta,
+            self._tick_params.reposition_speed,
         )
-        self._move_to_start_log_entry(residual)
+        self._cmd_pub.publish(cmd)
         if self._segment_complete(
             start_point[0],
             start_point[1],
@@ -1483,42 +1245,6 @@ class StrokeExecutor(Node):
                 self._enter_probe_state(self._tick_params.pen_up_pos)
             else:
                 self._set_state(DRAW_SEGMENT)
-            return
-        self._publish_pen(self._tick_params.pen_up_pos)
-        self._publish_drawing_active(False)
-        cmd = self._tracking_cmd(
-            start_point[0],
-            start_point[1],
-            self._tick_params.target_theta,
-            self._tick_params.reposition_speed,
-        )
-        cmd_source = 'normal'
-        if self._move_to_start_cmd_needs_fallback(cmd, residual):
-            cmd = self._move_to_start_fallback_cmd(
-                residual,
-                self._tick_params.reposition_speed,
-            )
-            cmd_source = 'fallback'
-            if not self._move_to_start_fallback_activation_logged:
-                self.get_logger().warn(
-                    'MOVE_TO_STROKE_START fallback command engaged; '
-                    'normal tracking output was effectively zero while the '
-                    'start target was still outside tolerance.'
-                )
-                self._move_to_start_fallback_activation_logged = True
-            self._move_to_start_fallback_in_use = True
-        else:
-            if (
-                self._move_to_start_fallback_in_use
-                and not self._move_to_start_fallback_recovery_logged
-            ):
-                self.get_logger().info(
-                    'MOVE_TO_STROKE_START normal tracking recovered after fallback use.'
-                )
-                self._move_to_start_fallback_recovery_logged = True
-            self._move_to_start_fallback_in_use = False
-        self._maybe_log_move_to_start_debug(residual, cmd, cmd_source)
-        self._cmd_pub.publish(cmd)
 
     def _handle_state_pen_probe(self) -> None:
         self._publish_drawing_active(False)
@@ -1732,9 +1458,6 @@ class StrokeExecutor(Node):
         self._publish_pen(self._tick_params.pen_up_pos)
         self._publish_drawing_active(False)
 
-    # ------------------------------------------------------------------
-    # FSM dispatch and top-level timer loop
-    # ------------------------------------------------------------------
     def _dispatch_state(self) -> bool:
         if self._state == IDLE:
             self._handle_state_idle()
