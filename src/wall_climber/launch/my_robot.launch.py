@@ -308,7 +308,7 @@ def generate_launch_description():
             ]
         ),
 
-        # Arm point-to-point pose controller
+        # Arm point-to-point pose controller and local arm-only writer
         launch.actions.TimerAction(
             period=12.0,
             actions=[
@@ -322,12 +322,16 @@ def generate_launch_description():
                         {'pose_timeout_sec': 0.5},
                         {'pen_pose_timeout_sec': 0.5},
                         {'pen_up_pos': 0.018},
+                        {'pen_down_pos': -0.020},
                         {'target_reached_tol': 0.010},
                         {'ik_verify_tol': 0.002},
                         {'local_x_min': -0.09},
                         {'local_x_max': 0.09},
                         {'local_y_min': 0.22},
                         {'local_y_max': 0.32},
+                        {'draw_sample_step_m': 0.005},
+                        {'pen_settle_sec': 0.15},
+                        {'pen_contact_timeout_sec': 0.5},
                     ],
                 ),
             ]

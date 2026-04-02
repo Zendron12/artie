@@ -12,6 +12,7 @@ import time
 
 import rclpy
 from geometry_msgs.msg import Twist
+from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Float64
 
 
@@ -27,6 +28,8 @@ class SwerveKeyboardPlugin:
     _UPPER_LEN = 0.14  # upper arm length
     _FORE_LEN = 0.18   # forearm length
     _FORE_ANG = 0.281  # fixed forearm offset angle (rad)
+    _EXTERNAL_ARM_TIMEOUT_SEC = 0.25
+    _MALFORMED_WARN_PERIOD_SEC = 1.0
 
     def init(self, webots_node, properties):
         self._robot = webots_node.robot
@@ -93,6 +96,11 @@ class SwerveKeyboardPlugin:
         self._auto_pen_target_time = time.monotonic()
         self._pen_pos = self._auto_pen_up_pos
         self._pen_contact = False
+        self._external_theta_L = 0.0
+        self._external_theta_R = 0.0
+        self._external_target_time = None
+        self._external_stream_active = False
+        self._last_external_warn_time = None
 
         # ---- ROS 2 manual-drive publisher ----------------------------
         if not rclpy.ok():
@@ -106,6 +114,12 @@ class SwerveKeyboardPlugin:
         )
         self._pen_contact_sub = self._ros_node.create_subscription(
             Bool, '/wall_climber/pen_contact', self._pen_contact_cb, 1
+        )
+        self._arm_target_sub = self._ros_node.create_subscription(
+            JointState,
+            '/wall_climber/arm_joint_targets',
+            self._arm_target_cb,
+            1,
         )
         self._last_drive_nonzero = False
 
@@ -223,6 +237,63 @@ class SwerveKeyboardPlugin:
     def _pen_contact_cb(self, msg):
         self._pen_contact = bool(msg.data)
 
+    def _warn_malformed_arm_target(self, reason):
+        now = time.monotonic()
+        if (
+            self._last_external_warn_time is not None
+            and (now - self._last_external_warn_time) < self._MALFORMED_WARN_PERIOD_SEC
+        ):
+            return
+        print(f'[SwerveKB] WARNING: malformed external arm target ignored ({reason})')
+        self._last_external_warn_time = now
+
+    def _arm_target_cb(self, msg):
+        shoulder_indices = {}
+        for idx, name in enumerate(msg.name):
+            if name not in ('left_shoulder_joint', 'right_shoulder_joint'):
+                continue
+            if name in shoulder_indices:
+                self._warn_malformed_arm_target(f'duplicate joint name "{name}"')
+                return
+            shoulder_indices[name] = idx
+
+        left_idx = shoulder_indices.get('left_shoulder_joint')
+        right_idx = shoulder_indices.get('right_shoulder_joint')
+        if left_idx is None or right_idx is None:
+            self._warn_malformed_arm_target('missing shoulder joint name')
+            return
+        if left_idx >= len(msg.position) or right_idx >= len(msg.position):
+            self._warn_malformed_arm_target('missing shoulder position entry')
+            return
+
+        theta_L = float(msg.position[left_idx])
+        theta_R = float(msg.position[right_idx])
+        if not math.isfinite(theta_L) or not math.isfinite(theta_R):
+            self._warn_malformed_arm_target('non-finite shoulder target')
+            return
+
+        self._external_theta_L = theta_L
+        self._external_theta_R = theta_R
+        self._external_target_time = time.monotonic()
+
+    def _select_arm_shoulders(self):
+        now = time.monotonic()
+        external_fresh = (
+            self._external_target_time is not None
+            and (now - self._external_target_time) <= self._EXTERNAL_ARM_TIMEOUT_SEC
+        )
+        if external_fresh:
+            if not self._external_stream_active:
+                print('[SwerveKB] External arm target stream active')
+            self._external_stream_active = True
+            return self._external_theta_L, self._external_theta_R
+
+        if self._external_stream_active:
+            print('[SwerveKB] External arm target stream timed out')
+            print('[SwerveKB] Manual shoulder fallback resumed')
+            self._external_stream_active = False
+        return self._theta_L, self._theta_R
+
     # ------------------------------------------------------------------
     def step(self):
         rclpy.spin_once(self._ros_node, timeout_sec=0)
@@ -299,14 +370,17 @@ class SwerveKeyboardPlugin:
         self._theta_L = max(self._shoulder_min, min(self._shoulder_max, self._theta_L))
         self._theta_R = max(self._shoulder_min, min(self._shoulder_max, self._theta_R))
         self._pen_pos = max(self._pen_min_pos, min(self._pen_max_pos, self._pen_pos))
+        cmd_theta_L, cmd_theta_R = self._select_arm_shoulders()
+        cmd_theta_L = max(self._shoulder_min, min(self._shoulder_max, cmd_theta_L))
+        cmd_theta_R = max(self._shoulder_min, min(self._shoulder_max, cmd_theta_R))
 
         # Solve closed-loop constraint for elbows
-        result = self._solve_elbows(self._theta_L, self._theta_R)
+        result = self._solve_elbows(cmd_theta_L, cmd_theta_R)
         if result is not None:
             phi_L, phi_R = result
             phi_L = max(self._elbow_min, min(self._elbow_max, phi_L))
             phi_R = max(self._elbow_min, min(self._elbow_max, phi_R))
-            targets = [self._theta_L, phi_L, self._theta_R, phi_R, self._pen_pos]
+            targets = [cmd_theta_L, phi_L, cmd_theta_R, phi_R, self._pen_pos]
         else:
             # Unreachable — don't move (hold previous position)
             targets = None
