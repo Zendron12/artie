@@ -69,7 +69,7 @@ class ActiveGoal:
 
 
 @dataclass(frozen=True)
-class StrokeSegment:
+class StrokePath:
     goals: tuple[ActiveGoal, ...]
 
 
@@ -85,7 +85,7 @@ class ArmPoseController(Node):
 
     _STROKE_MOVE_TO_START = 'move_to_start'
     _STROKE_PEN_DOWN = 'pen_down'
-    _STROKE_DRAW_SEGMENT = 'draw_segment'
+    _STROKE_DRAW_SEGMENTS = 'draw_segments'
     _STROKE_PEN_UP = 'pen_up'
 
     _LEFT_SHOULDER_NAME = 'left_shoulder_joint'
@@ -101,6 +101,7 @@ class ArmPoseController(Node):
     _SHOULDER_MAX = 2.30
     _ELBOW_MIN = -2.349
     _ELBOW_MAX = 2.349
+    _BODY_WRITER_SHALLOW_DRAW_TARGET = -0.010
 
     def __init__(self) -> None:
         super().__init__('arm_pose_controller')
@@ -135,9 +136,9 @@ class ArmPoseController(Node):
         self._current_command_pair: tuple[float, float] | None = None
         self._last_accepted_command_pair: tuple[float, float] | None = None
 
-        self._stroke_segments: list[StrokeSegment] = []
+        self._stroke_paths: list[StrokePath] = []
         self._stroke_count = 0
-        self._stroke_segment_index = 0
+        self._stroke_path_index = 0
         self._stroke_waypoint_index = 0
         self._stroke_state: str | None = None
         self._stroke_state_enter_sec: float | None = None
@@ -327,10 +328,10 @@ class ArmPoseController(Node):
         if parsed is None:
             return
 
-        stroke_count, segments = parsed
-        self._begin_stroke_plan(stroke_count, segments, pose_snapshot, params)
+        stroke_count, stroke_paths = parsed
+        self._begin_stroke_plan(stroke_count, stroke_paths, pose_snapshot, params)
         self.get_logger().info(
-            f'Arm stroke plan accepted: strokes={stroke_count} segments={len(segments)}'
+            f'Arm stroke plan accepted: strokes={stroke_count} paths={len(stroke_paths)}'
         )
 
     def _now_sec(self) -> float:
@@ -404,9 +405,9 @@ class ArmPoseController(Node):
     def _clear_execution(self) -> None:
         self._mode = None
         self._active_goal = None
-        self._stroke_segments = []
+        self._stroke_paths = []
         self._stroke_count = 0
-        self._stroke_segment_index = 0
+        self._stroke_path_index = 0
         self._stroke_waypoint_index = 0
         self._stroke_state = None
         self._stroke_state_enter_sec = None
@@ -434,23 +435,23 @@ class ArmPoseController(Node):
     def _begin_stroke_plan(
         self,
         stroke_count: int,
-        segments: list[StrokeSegment],
+        stroke_paths: list[StrokePath],
         pose_snapshot: PoseSnapshot,
         params: ControllerParams,
     ) -> None:
         self._clear_execution()
         self._mode = self._MODE_STROKE
         self._stroke_count = stroke_count
-        self._stroke_segments = segments
-        self._stroke_segment_index = 0
+        self._stroke_paths = stroke_paths
+        self._stroke_path_index = 0
         self._stroke_waypoint_index = 0
         self._stroke_pose_snapshot = pose_snapshot
-        self._activate_goal(segments[0].goals[0])
+        self._activate_goal(stroke_paths[0].goals[0])
         self._set_stroke_state(self._STROKE_MOVE_TO_START, params)
         self._publish_pen(params.pen_up_pos)
         self._publish_shoulder_targets(
-            segments[0].goals[0].theta_l,
-            segments[0].goals[0].theta_r,
+            stroke_paths[0].goals[0].theta_l,
+            stroke_paths[0].goals[0].theta_r,
         )
 
     def _set_stroke_state(self, state: str, params: ControllerParams) -> None:
@@ -459,13 +460,24 @@ class ArmPoseController(Node):
         if state == self._STROKE_MOVE_TO_START:
             self._set_status(self._STATUS_MOVING_TO_START)
             self.get_logger().info(
-                f'Entered move_to_start for arm stroke segment {self._stroke_segment_index + 1}/{len(self._stroke_segments)}'
+                f'Entered move_to_start for arm stroke {self._stroke_path_index + 1}/{len(self._stroke_paths)}'
             )
-        elif state == self._STROKE_DRAW_SEGMENT:
+        elif state == self._STROKE_PEN_DOWN:
+            self.get_logger().info(
+                f'Arm stroke {self._stroke_path_index + 1}/{len(self._stroke_paths)} '
+                f'pen-down target={self._effective_draw_pen_target(params):.4f}'
+            )
+        elif state == self._STROKE_DRAW_SEGMENTS:
             self._set_status(self._STATUS_DRAWING)
             self.get_logger().info(
-                f'Entered drawing for arm stroke segment {self._stroke_segment_index + 1}/{len(self._stroke_segments)}'
+                f'Entered drawing for arm stroke {self._stroke_path_index + 1}/{len(self._stroke_paths)}'
             )
+
+    def _effective_draw_pen_target(self, params: ControllerParams) -> float:
+        return max(
+            float(params.pen_down_pos),
+            self._BODY_WRITER_SHALLOW_DRAW_TARGET,
+        )
 
     def _distance_to_board_point(self, board_x: float, board_y: float) -> float:
         assert self._pen_x is not None and self._pen_y is not None
@@ -762,7 +774,7 @@ class ArmPoseController(Node):
         payload: str,
         params: ControllerParams,
         pose_snapshot: PoseSnapshot,
-    ) -> tuple[int, list[StrokeSegment]] | None:
+    ) -> tuple[int, list[StrokePath]] | None:
         try:
             data = json.loads(payload)
         except json.JSONDecodeError as exc:
@@ -781,7 +793,7 @@ class ArmPoseController(Node):
             self._enter_error('Arm stroke plan rejected: strokes must be a non-empty list.', params)
             return None
 
-        segments: list[StrokeSegment] = []
+        stroke_paths: list[StrokePath] = []
         reference_pair = self._reference_command_pair()
         for stroke_index, stroke in enumerate(strokes):
             if not isinstance(stroke, dict):
@@ -823,6 +835,7 @@ class ArmPoseController(Node):
                 )
                 return None
 
+            stroke_goals: list[ActiveGoal] = []
             for segment_index in range(len(points) - 1):
                 segment_goals, reference_pair, reason = self._sample_segment_goals(
                     points[segment_index],
@@ -836,19 +849,33 @@ class ArmPoseController(Node):
                 if segment_goals is None:
                     self._enter_error(f'Arm stroke plan rejected: {reason}.', params)
                     return None
-                segments.append(StrokeSegment(goals=tuple(segment_goals)))
+                if not stroke_goals:
+                    stroke_goals.extend(segment_goals)
+                else:
+                    stroke_goals.extend(segment_goals[1:])
 
-        if not segments:
-            self._enter_error('Arm stroke plan rejected: no executable segments found.', params)
-            return None
-        return len(strokes), segments
+            if not stroke_goals:
+                self._enter_error(
+                    f'Arm stroke plan rejected: stroke {stroke_index} has no executable waypoints.',
+                    params,
+                )
+                return None
+            stroke_paths.append(StrokePath(goals=tuple(stroke_goals)))
 
-    def _current_segment(self) -> StrokeSegment | None:
-        if not self._stroke_segments:
+        if not stroke_paths:
+            self._enter_error(
+                'Arm stroke plan rejected: no executable stroke paths found.',
+                params,
+            )
             return None
-        if self._stroke_segment_index < 0 or self._stroke_segment_index >= len(self._stroke_segments):
+        return len(strokes), stroke_paths
+
+    def _current_stroke_path(self) -> StrokePath | None:
+        if not self._stroke_paths:
             return None
-        return self._stroke_segments[self._stroke_segment_index]
+        if self._stroke_path_index < 0 or self._stroke_path_index >= len(self._stroke_paths):
+            return None
+        return self._stroke_paths[self._stroke_path_index]
 
     def _finish_point_goal(self, params: ControllerParams) -> None:
         self._clear_execution()
@@ -913,9 +940,9 @@ class ArmPoseController(Node):
             )
             return
 
-        segment = self._current_segment()
-        if segment is None:
-            self._enter_error('Arm stroke execution error: invalid segment state.', params)
+        stroke_path = self._current_stroke_path()
+        if stroke_path is None:
+            self._enter_error('Arm stroke execution error: invalid stroke path state.', params)
             return
         if self._stroke_state_enter_sec is None or self._stroke_state is None:
             self._enter_error('Arm stroke execution error: invalid stroke state.', params)
@@ -940,7 +967,7 @@ class ArmPoseController(Node):
             return
 
         if self._stroke_state == self._STROKE_PEN_DOWN:
-            self._publish_pen(params.pen_down_pos)
+            self._publish_pen(self._effective_draw_pen_target(params))
             self._publish_shoulder_targets(
                 self._active_goal.theta_l,
                 self._active_goal.theta_r,
@@ -952,12 +979,12 @@ class ArmPoseController(Node):
                 self._pen_contact_fresh(params.pen_contact_timeout_sec)
                 and self._pen_contact
             ):
-                if len(segment.goals) <= 1:
+                if len(stroke_path.goals) <= 1:
                     self._set_stroke_state(self._STROKE_PEN_UP, params)
                     return
                 self._stroke_waypoint_index = 1
-                self._activate_goal(segment.goals[self._stroke_waypoint_index])
-                self._set_stroke_state(self._STROKE_DRAW_SEGMENT, params)
+                self._activate_goal(stroke_path.goals[self._stroke_waypoint_index])
+                self._set_stroke_state(self._STROKE_DRAW_SEGMENTS, params)
                 return
             if elapsed >= (params.pen_settle_sec + params.pen_contact_timeout_sec):
                 self._enter_error(
@@ -966,8 +993,8 @@ class ArmPoseController(Node):
                 )
             return
 
-        if self._stroke_state == self._STROKE_DRAW_SEGMENT:
-            self._publish_pen(params.pen_down_pos)
+        if self._stroke_state == self._STROKE_DRAW_SEGMENTS:
+            self._publish_pen(self._effective_draw_pen_target(params))
             self._publish_shoulder_targets(
                 self._active_goal.theta_l,
                 self._active_goal.theta_r,
@@ -982,9 +1009,9 @@ class ArmPoseController(Node):
                 self._set_status(self._STATUS_DRAWING)
                 return
 
-            if self._stroke_waypoint_index + 1 < len(segment.goals):
+            if self._stroke_waypoint_index + 1 < len(stroke_path.goals):
                 self._stroke_waypoint_index += 1
-                self._activate_goal(segment.goals[self._stroke_waypoint_index])
+                self._activate_goal(stroke_path.goals[self._stroke_waypoint_index])
                 return
 
             self._set_stroke_state(self._STROKE_PEN_UP, params)
@@ -998,14 +1025,14 @@ class ArmPoseController(Node):
             )
             if (now_sec - self._stroke_state_enter_sec) < params.pen_settle_sec:
                 return
-            if self._stroke_segment_index + 1 < len(self._stroke_segments):
-                self._stroke_segment_index += 1
+            if self._stroke_path_index + 1 < len(self._stroke_paths):
+                self._stroke_path_index += 1
                 self._stroke_waypoint_index = 0
-                next_segment = self._current_segment()
-                if next_segment is None:
-                    self._enter_error('Arm stroke execution error: invalid next segment state.', params)
+                next_stroke_path = self._current_stroke_path()
+                if next_stroke_path is None:
+                    self._enter_error('Arm stroke execution error: invalid next stroke path state.', params)
                     return
-                self._activate_goal(next_segment.goals[0])
+                self._activate_goal(next_stroke_path.goals[0])
                 self._set_stroke_state(self._STROKE_MOVE_TO_START, params)
                 return
             self._finish_stroke_plan(params)

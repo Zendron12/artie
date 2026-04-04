@@ -69,6 +69,7 @@ class MagneticSupervisorPlugin:
         self._trail_index_field = None   # MFInt32 handle
         self._trail_last_dir = None
         self._trail_last_round_pos = None
+        self._trail_visual_only_logged = False
 
         # --- board geometry / writable-area parameters ---
         self._board_center_x = float(properties.get('board_center_x', '0.0'))
@@ -560,6 +561,91 @@ class MagneticSupervisorPlugin:
     # ------------------------------------------------------------------
     #  Trail drawing  (single IndexedFaceSet mesh)
     # ------------------------------------------------------------------
+    def _find_root_child_index(self, target_node):
+        if self._root_children is None or target_node is None:
+            return None
+        try:
+            target_id = target_node.getId()
+        except Exception:
+            return None
+        try:
+            count = self._root_children.getCount()
+        except Exception:
+            return None
+        for index in range(count):
+            try:
+                child = self._root_children.getMFNode(index)
+            except Exception:
+                continue
+            if child is None:
+                continue
+            try:
+                if child.getId() == target_id:
+                    return index
+            except Exception:
+                continue
+        return None
+
+    def _drop_existing_trail_node(self, trail_node):
+        index = self._find_root_child_index(trail_node)
+        if index is None:
+            return False
+        try:
+            self._root_children.removeMF(index)
+            return True
+        except Exception as exc:
+            self._log.warn(f'Failed to remove invalid TRAIL node: {exc}')
+            return False
+
+    def _bind_trail_mesh_fields(self, trail_node):
+        if trail_node is None:
+            return False
+
+        # The trail must stay a pure visual subtree:
+        # Transform -> Shape -> IndexedFaceSet, with no physics fields.
+        if self._field(trail_node, 'physics') is not None:
+            return False
+        if self._field(trail_node, 'boundingObject') is not None:
+            return False
+
+        try:
+            children = trail_node.getField('children')
+            if children is None or children.getCount() < 1:
+                return False
+            shape = children.getMFNode(0)
+            if shape is None:
+                return False
+            if self._field(shape, 'physics') is not None:
+                return False
+            if self._field(shape, 'boundingObject') is not None:
+                return False
+            geometry_field = shape.getField('geometry')
+            if geometry_field is None:
+                return False
+            ifs = geometry_field.getSFNode()
+            if ifs is None:
+                return False
+            coord = self._field_sfnode(ifs, 'coord')
+            if coord is None:
+                return False
+            point_field = coord.getField('point')
+            index_field = ifs.getField('coordIndex')
+            if point_field is None or index_field is None:
+                return False
+        except Exception:
+            return False
+
+        self._trail_point_field = point_field
+        self._trail_index_field = index_field
+        self._trail_mesh_ready = True
+        if not self._trail_visual_only_logged:
+            self._log.info(
+                'Trail mesh ready in visual-only mode '
+                '(Transform -> Shape -> IndexedFaceSet, no physics).'
+            )
+            self._trail_visual_only_logged = True
+        return True
+
     def _init_trail_mesh(self):
         """Create ONE IndexedFaceSet node for all pen strokes.
 
@@ -567,14 +653,29 @@ class MagneticSupervisorPlugin:
         nodes (which choke Webots' scene-tree traversal), we place a
         single mesh and append quad vertices/indices to it.
         """
+        trail_node = self._supervisor.getFromDef('TRAIL')
+        if trail_node is not None:
+            if self._bind_trail_mesh_fields(trail_node):
+                return True
+            self._log.warn(
+                'Existing TRAIL node is not a pure visual mesh; recreating it.'
+            )
+            self._trail_mesh_ready = False
+            self._trail_point_field = None
+            self._trail_index_field = None
+            self._drop_existing_trail_node(trail_node)
+
         y = self._wall_y - 0.006
         node_str = (
             f'DEF TRAIL Transform {{ '
             f'translation 0 {y:.5f} 0 '
             f'children [ Shape {{ '
+            f'castShadows FALSE '
+            f'isPickable FALSE '
             f'appearance Appearance {{ material Material {{ '
             f'diffuseColor 0 0 0 emissiveColor 0.05 0.05 0.05 }} }} '
             f'geometry IndexedFaceSet {{ '
+            f'solid FALSE '
             f'coord Coordinate {{ point [ '
             f'-100 0 -100, -99.999 0 -100, -99.999 0 -99.999, -100 0 -99.999 ] }} '
             f'coordIndex [ 0 1 2 3 -1 ] '
@@ -593,21 +694,15 @@ class MagneticSupervisorPlugin:
             count = self._root_children.getCount()
             trail_node = self._root_children.getMFNode(count - 1)
 
-        try:
-            shape = trail_node.getField('children').getMFNode(0)
-            ifs = shape.getField('geometry').getSFNode()
-            coord = ifs.getField('coord').getSFNode()
-            self._trail_point_field = coord.getField('point')
-            self._trail_index_field = ifs.getField('coordIndex')
-            self._trail_mesh_ready = True
+        if self._bind_trail_mesh_fields(trail_node):
             self._log.info(
                 'Trail mesh (IndexedFaceSet) created — '
                 'single-node rendering, zero scene-tree overhead'
             )
             return True
-        except Exception as exc:
-            self._log.error(f'Failed to get trail mesh fields: {exc}')
-            return False
+
+        self._log.error('Failed to initialize TRAIL as a pure visual mesh.')
+        return False
 
     def _add_trail_quad(self, x0, z0, x1, z1):
         """Append a quad (two triangles) from (x0,z0) to (x1,z1)."""
